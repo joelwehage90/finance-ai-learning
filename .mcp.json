@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "fortnox": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["projects/fortnox-mcp/fortnox_server.py"]
+    }
+  }
+}
