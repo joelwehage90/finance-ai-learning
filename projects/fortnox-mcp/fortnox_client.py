@@ -62,6 +62,7 @@ class FortnoxClient:
         method: str,
         path: str,
         params: Optional[dict] = None,
+        json_body: Optional[dict] = None,
     ) -> dict[str, Any]:
         """Make an authenticated request to the Fortnox API.
 
@@ -74,9 +75,11 @@ class FortnoxClient:
                 method,
                 path,
                 params=params,
+                json=json_body,
                 headers={
                     "Authorization": f"Bearer {self._access_token}",
                     "Accept": "application/json",
+                    "Content-Type": "application/json",
                 },
             )
 

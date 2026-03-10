@@ -357,6 +357,11 @@ Fortnox2Google, Zwapgrid m.fl. erbjuder färdig P&L/BR-extraktion.
 
 **OBS:** `fromdate`/`todate` stöds ej — använd `lastmodified` för inkrementell synk.
 
+**Viktiga skillnader mot kundfakturor (lärt oss vid sandbox-test):**
+- Rader heter `SupplierInvoiceRows` (inte `InvoiceRows`)
+- Kontofältet heter `Account` (inte `AccountNumber`)
+- `Description` finns inte på radnivå — använd `Comments` på fakturanivå
+
 ### 7.3 Betalningar
 
 **Scope:** `payment`
@@ -602,6 +607,9 @@ for inv in invoices:
 | Radering "tyst" | Raderade poster försvinner bara — ingen soft-delete-flagga |
 | `API_BLANK` för att tömma fält | Sätt ett fält till strängen `API_BLANK` för att rensa det |
 | Rate limit delad | Två tokens för samma tenant delar gräns |
+| Sandbox kräver räkenskapsår | Måste skapas manuellt med kontoplan (t.ex. "Bas 2025") |
+| Fältnamn inkonsistenta | Kundfaktura: `InvoiceRows`/`AccountNumber`. Leverantörsfaktura: `SupplierInvoiceRows`/`Account` |
+| Kontoplansnamn exakt match | `BAS2024` fungerar inte — måste vara `Bas 2025` (med mellanslag) |
 | Licenskrav | Kunden måste ha rätt Fortnox-modul för varje scope |
 | Sandbox-limit | Max 30 testmiljöer via Developer Portal |
 | Concurrent refresh-race | Serialisera token-refresh — annars invalideras tokens |
