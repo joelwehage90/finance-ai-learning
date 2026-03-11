@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 ~$*
+
+# Raw (non-anonymized) SIE files — never commit these
+raw_*.se
+*_raw.se
