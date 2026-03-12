@@ -25,14 +25,12 @@ _THIS_DIR = Path(__file__).resolve().parent
 load_dotenv(_THIS_DIR / ".env")
 
 from sie_parser import parse_sie  # noqa: E402
-from fortnox_sie_client import FortnoxSIEClient  # noqa: E402
-from supabase_loader import SupabaseLoader  # noqa: E402
 
 
 async def main(args: argparse.Namespace) -> None:
     """Run the SIE sync pipeline."""
-    fortnox: FortnoxSIEClient | None = None
-    loader: SupabaseLoader | None = None
+    fortnox = None
+    loader = None
 
     try:
         # -----------------------------------------------------------
@@ -49,7 +47,8 @@ async def main(args: argparse.Namespace) -> None:
             print(f"Read SIE from file: {file_path}")
 
         else:
-            # Fetch from Fortnox API
+            # Fetch from Fortnox API (lazy import to avoid dependency when using --from-file)
+            from fortnox_sie_client import FortnoxSIEClient
             fortnox = FortnoxSIEClient(
                 client_id=_require_env("FORTNOX_CLIENT_ID"),
                 client_secret=_require_env("FORTNOX_CLIENT_SECRET"),
@@ -109,8 +108,9 @@ async def main(args: argparse.Namespace) -> None:
             return
 
         # -----------------------------------------------------------
-        # Step 3: Load to Supabase
+        # Step 3: Load to Supabase (lazy import)
         # -----------------------------------------------------------
+        from supabase_loader import SupabaseLoader
         loader = SupabaseLoader(
             url=_require_env("SUPABASE_URL"),
             key=_require_env("SUPABASE_SERVICE_KEY"),
