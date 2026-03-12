@@ -29,7 +29,7 @@ load_dotenv()
 # Configuration — adjust these as needed
 REDIRECT_PORT = 8080
 REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}/callback"
-SCOPES = "companyinformation bookkeeping invoice customer supplier supplierinvoice"
+SCOPES = "companyinformation bookkeeping invoice customer supplier supplierinvoice costcenter project"
 
 
 class OAuthCallbackHandler(BaseHTTPRequestHandler):

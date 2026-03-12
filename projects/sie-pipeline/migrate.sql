@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS period_balances (
     tenant_id       UUID NOT NULL REFERENCES tenants(id),
+    year_id         INT NOT NULL,       -- fiscal year for delete+insert scoping
     account_number  INT NOT NULL,
     period          TEXT NOT NULL,      -- "2026-01", "2026-IB", "2026-UB", "2026-RES"
     cost_center     TEXT DEFAULT '*',
@@ -126,6 +127,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS budget (
     tenant_id       UUID NOT NULL REFERENCES tenants(id),
+    year_id         INT NOT NULL,       -- fiscal year for delete+insert scoping
     account_number  INT NOT NULL,
     period          TEXT NOT NULL,      -- "2026-01"
     cost_center     TEXT DEFAULT '*',
@@ -161,3 +163,9 @@ CREATE INDEX IF NOT EXISTS idx_vouchers_date
 
 CREATE INDEX IF NOT EXISTS idx_period_balances_period
     ON period_balances(tenant_id, period);
+
+CREATE INDEX IF NOT EXISTS idx_period_balances_year
+    ON period_balances(tenant_id, year_id);
+
+CREATE INDEX IF NOT EXISTS idx_budget_year
+    ON budget(tenant_id, year_id);

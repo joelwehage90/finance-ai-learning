@@ -1,11 +1,14 @@
-"""Supabase loader — upserts parsed SIE data into Supabase tables.
+"""Supabase loader — syncs parsed SIE data into Supabase tables.
 
 Takes the structured dict from sie_parser.parse_sie() and loads it
 into the Supabase database using the official Python client.
 
 Design:
-    - All upserts are idempotent (safe to re-run).
-    - Transactions use delete + insert (BIGSERIAL PK has no natural key).
+    - Supabase mirrors Fortnox: year-scoped tables use delete + insert
+      so that deletions in Fortnox are reflected automatically.
+    - Year-scoped (delete + insert): vouchers, transactions,
+      period_balances, budget.
+    - Global (upsert): accounts, dimensions, financial_years.
     - Amounts are converted from Decimal to float for JSON serialization.
       PostgreSQL NUMERIC(15,2) preserves full precision.
 
@@ -162,8 +165,9 @@ class SupabaseLoader:
     ) -> int:
         """Load period balances, opening/closing balances, and results.
 
-        All are stored in the same period_balances table with different
-        balance_type values and period formats:
+        Uses a full-replace strategy scoped by year_id, consistent with
+        vouchers/transactions. All balance types are stored in the same
+        table with different balance_type values and period formats:
           - period balances: period="2026-01", balance_type="period"
           - opening balances: period="2026-IB", balance_type="opening"
           - closing balances: period="2026-UB", balance_type="closing"
@@ -176,6 +180,7 @@ class SupabaseLoader:
             dims = pb.get("dimensions", {})
             rows.append({
                 "tenant_id": self._tenant_id,
+                "year_id": year_id,
                 "account_number": pb["account"],
                 "period": _sie_period_to_iso(pb["period"]),
                 "cost_center": _extract_dimension(dims, 1),
@@ -188,6 +193,7 @@ class SupabaseLoader:
         for ib in opening_balances:
             rows.append({
                 "tenant_id": self._tenant_id,
+                "year_id": year_id,
                 "account_number": ib["account"],
                 "period": f"{year_id}-IB",
                 "cost_center": "*",
@@ -200,6 +206,7 @@ class SupabaseLoader:
         for ub in closing_balances:
             rows.append({
                 "tenant_id": self._tenant_id,
+                "year_id": year_id,
                 "account_number": ub["account"],
                 "period": f"{year_id}-UB",
                 "cost_center": "*",
@@ -212,6 +219,7 @@ class SupabaseLoader:
         for res in result_balances:
             rows.append({
                 "tenant_id": self._tenant_id,
+                "year_id": year_id,
                 "account_number": res["account"],
                 "period": f"{year_id}-RES",
                 "cost_center": "*",
@@ -220,8 +228,15 @@ class SupabaseLoader:
                 "balance_type": "result",
             })
 
+        # Full replace for this year — mirrors Fortnox exactly.
+        self._client.table("period_balances") \
+            .delete() \
+            .eq("tenant_id", self._tenant_id) \
+            .eq("year_id", year_id) \
+            .execute()
+
         if rows:
-            self._batch_upsert("period_balances", rows)
+            self._batch_insert("period_balances", rows)
         return len(rows)
 
     def _load_vouchers(
@@ -229,9 +244,12 @@ class SupabaseLoader:
     ) -> tuple[int, int]:
         """Load vouchers and their transactions.
 
-        Vouchers are upserted (they have a composite natural key).
-        Transactions are deleted and re-inserted (they use BIGSERIAL PK
-        with no natural key for matching).
+        Uses a full-replace strategy: delete all existing vouchers and
+        transactions for the fiscal year, then insert fresh from the
+        SIE4 snapshot. This ensures Supabase mirrors Fortnox exactly,
+        including voucher deletions.
+
+        Delete order matters due to FK: transactions → vouchers.
 
         Returns:
             Tuple of (voucher_count, transaction_count).
@@ -267,37 +285,55 @@ class SupabaseLoader:
                     "transaction_info": t.get("text"),
                 })
 
+        # SIE4 is a complete snapshot of the fiscal year, so we do a
+        # full replace: delete existing data then insert fresh.
+        # Order matters: transactions first (FK → vouchers).
+        self._client.table("transactions") \
+            .delete() \
+            .eq("tenant_id", self._tenant_id) \
+            .eq("year_id", year_id) \
+            .execute()
+
+        self._client.table("vouchers") \
+            .delete() \
+            .eq("tenant_id", self._tenant_id) \
+            .eq("year_id", year_id) \
+            .execute()
+
         if voucher_rows:
-            self._batch_upsert("vouchers", voucher_rows)
+            self._batch_insert("vouchers", voucher_rows)
 
         if transaction_rows:
-            # Delete existing transactions for this tenant + year,
-            # then insert fresh. Safe because SIE4 is a complete export.
-            self._client.table("transactions") \
-                .delete() \
-                .eq("tenant_id", self._tenant_id) \
-                .eq("year_id", year_id) \
-                .execute()
-
             self._batch_insert("transactions", transaction_rows)
 
         return len(voucher_rows), len(transaction_rows)
 
     def _load_budget(self, period_budgets: list[dict], year_id: int) -> int:
-        """Load period budgets from #PBUDGET."""
+        """Load period budgets from #PBUDGET.
+
+        Full replace scoped by year_id — mirrors Fortnox exactly.
+        """
         rows: list[dict] = []
         for pb in period_budgets:
             dims = pb.get("dimensions", {})
             rows.append({
                 "tenant_id": self._tenant_id,
+                "year_id": year_id,
                 "account_number": pb["account"],
                 "period": _sie_period_to_iso(pb["period"]),
                 "cost_center": _extract_dimension(dims, 1),
                 "amount": _dec_to_float(pb["amount"]),
             })
 
+        # Full replace for this year.
+        self._client.table("budget") \
+            .delete() \
+            .eq("tenant_id", self._tenant_id) \
+            .eq("year_id", year_id) \
+            .execute()
+
         if rows:
-            self._batch_upsert("budget", rows)
+            self._batch_insert("budget", rows)
         return len(rows)
 
     # ----------------------------------------------------------------
