@@ -96,7 +96,17 @@ class FortnoxClient:
                 await self._ensure_token()
                 continue
 
-            response.raise_for_status()
+            if response.status_code >= 400:
+                # Include Fortnox error details in the exception
+                try:
+                    error_body = response.json()
+                except Exception:
+                    error_body = response.text
+                raise httpx.HTTPStatusError(
+                    f"{response.status_code} for {path}: {error_body}",
+                    request=response.request,
+                    response=response,
+                )
             return response.json()
 
         raise RuntimeError("Fortnox API request failed after 3 retries")
@@ -106,6 +116,18 @@ class FortnoxClient:
     ) -> dict[str, Any]:
         """GET request to Fortnox API."""
         return await self._request("GET", path, params=params)
+
+    async def post(
+        self, path: str, json_body: dict, params: Optional[dict] = None
+    ) -> dict[str, Any]:
+        """POST request to Fortnox API."""
+        return await self._request("POST", path, params=params, json_body=json_body)
+
+    async def put(
+        self, path: str, json_body: Optional[dict] = None, params: Optional[dict] = None
+    ) -> dict[str, Any]:
+        """PUT request to Fortnox API."""
+        return await self._request("PUT", path, params=params, json_body=json_body)
 
     async def get_all_pages(
         self, path: str, params: Optional[dict] = None
