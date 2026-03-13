@@ -1,7 +1,8 @@
 """Fortnox SIE client — fetches SIE files from the Fortnox API.
 
-Extends the base FortnoxClient with support for text/plain responses
-(SIE files are not JSON) and financial year ID lookup.
+Extends the base FortnoxClient with support for binary SIE file
+responses (application/octet-stream in CP437 encoding) and
+financial year ID lookup.
 
 Usage:
     client = FortnoxSIEClient(client_id, client_secret, tenant_id)
@@ -25,7 +26,8 @@ class FortnoxSIEClient(FortnoxClient):
     """Fortnox client extended with SIE file fetching.
 
     The base FortnoxClient only handles JSON responses. SIE endpoints
-    return text/plain in CP437 encoding, so we need a separate method.
+    return application/octet-stream in CP437 encoding, so we need a
+    separate method that reads raw bytes and decodes them.
     """
 
     async def get_sie(

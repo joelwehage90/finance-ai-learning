@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "excel-backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd projects/excel-addin/backend && source .venv/bin/activate && uvicorn main:app --reload --port 8000"],
+      "port": 8000
+    },
+    {
+      "name": "excel-frontend",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--prefix", "projects/excel-addin/frontend", "webpack", "serve", "--mode", "development", "--port", "3000"],
+      "port": 3000
+    }
+  ]
+}
