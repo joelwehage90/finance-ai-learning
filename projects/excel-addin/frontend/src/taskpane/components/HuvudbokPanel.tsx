@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import {
   Button,
   Field,
+  Input,
   Select,
   Spinner,
   Text,
@@ -11,12 +12,9 @@ import {
 import { ArrowDownloadRegular } from "@fluentui/react-icons";
 import {
   getFinancialYears,
-  getRR,
-  getBR,
-  getRRComparative,
-  getBRComparative,
+  getHuvudbok,
   type FinancialYear,
-  type ReportData,
+  type TableData,
 } from "../../utils/api";
 import { writeToSheet, isExcelAvailable } from "./ExcelWriter";
 
@@ -37,11 +35,6 @@ const useStyles = makeStyles({
   },
 });
 
-interface ReportPanelProps {
-  type: "rr" | "br";
-  title: string;
-}
-
 /** Generate period options (YYYY-01 through YYYY-12) for a year. */
 function periodsForYear(fy: FinancialYear | null): string[] {
   if (!fy) return [];
@@ -52,19 +45,20 @@ function periodsForYear(fy: FinancialYear | null): string[] {
   });
 }
 
-const ReportPanel: React.FC<ReportPanelProps> = ({ type, title }) => {
+const HuvudbokPanel: React.FC = () => {
   const styles = useStyles();
 
   const [years, setYears] = useState<FinancialYear[]>([]);
   const [selectedYear, setSelectedYear] = useState<FinancialYear | null>(null);
   const [fromPeriod, setFromPeriod] = useState("");
   const [toPeriod, setToPeriod] = useState("");
-  const [comparison, setComparison] = useState<"none" | "prior_year">("none");
+  const [fromAccount, setFromAccount] = useState("1000");
+  const [toAccount, setToAccount] = useState("9999");
+  const [costCenter, setCostCenter] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch financial years on mount.
   useEffect(() => {
     getFinancialYears()
       .then((data) => {
@@ -99,58 +93,28 @@ const ReportPanel: React.FC<ReportPanelProps> = ({ type, title }) => {
     setResult(null);
 
     try {
-      let data: ReportData;
-      let sheetName: string;
-      let amountCols: string[];
+      const data: TableData = await getHuvudbok({
+        financial_year_id: String(selectedYear.id),
+        from_account: fromAccount,
+        to_account: toAccount,
+        from_period: fromPeriod,
+        to_period: toPeriod,
+        cost_center: costCenter || undefined,
+      });
 
-      const isComparative = comparison === "prior_year";
-
-      if (type === "rr") {
-        if (isComparative) {
-          data = await getRRComparative({
-            financial_year_id: String(selectedYear.id),
-            from_period: fromPeriod,
-            to_period: toPeriod,
-          });
-          sheetName = `RR jmf ${fromPeriod}–${toPeriod}`;
-          amountCols = ["Aktuellt", "Föreg. år", "Förändring SEK"];
-        } else {
-          data = await getRR({
-            financial_year_id: String(selectedYear.id),
-            from_period: fromPeriod,
-            to_period: toPeriod,
-          });
-          sheetName = `RR ${fromPeriod}–${toPeriod}`;
-          amountCols = ["Belopp"];
-        }
-      } else {
-        if (isComparative) {
-          data = await getBRComparative({
-            financial_year_id: String(selectedYear.id),
-            period: toPeriod,
-          });
-          sheetName = `BR jmf ${toPeriod}`;
-          amountCols = ["Aktuellt", "Föreg. år", "Förändring SEK"];
-        } else {
-          data = await getBR({
-            financial_year_id: String(selectedYear.id),
-            period: toPeriod,
-          });
-          sheetName = `BR ${toPeriod}`;
-          amountCols = ["Saldo"];
-        }
-      }
+      const sheetName = `Huvudbok ${fromAccount}-${toAccount} ${fromPeriod}`;
+      const amountCols = ["Debit", "Kredit", "Saldo"];
 
       if (isExcelAvailable()) {
         await writeToSheet(sheetName, data.headers, data.rows, amountCols);
         setResult(
-          `${data.rows.length} rader skrivna till ark "${sheetName}"`
+          `${data.count} rader skrivna till ark "${sheetName}"`
         );
       } else {
         setResult(
-          `${data.rows.length} rader hämtade (Excel ej tillgängligt)`
+          `${data.count} rader hämtade (Excel ej tillgängligt)`
         );
-        console.table(data.rows.slice(0, 20));
+        console.table(data.rows.slice(0, 30));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Okänt fel");
@@ -162,7 +126,7 @@ const ReportPanel: React.FC<ReportPanelProps> = ({ type, title }) => {
   return (
     <div>
       <Text size={400} weight="semibold" block style={{ marginBottom: 12 }}>
-        {title}
+        Huvudbok
       </Text>
 
       <div className={styles.section}>
@@ -183,6 +147,27 @@ const ReportPanel: React.FC<ReportPanelProps> = ({ type, title }) => {
 
       <div className={styles.section}>
         <div className={styles.row}>
+          <Field label="Från konto" size="small" style={{ flex: 1 }}>
+            <Input
+              size="small"
+              type="number"
+              value={fromAccount}
+              onChange={(_, d) => setFromAccount(d.value)}
+            />
+          </Field>
+          <Field label="Till konto" size="small" style={{ flex: 1 }}>
+            <Input
+              size="small"
+              type="number"
+              value={toAccount}
+              onChange={(_, d) => setToAccount(d.value)}
+            />
+          </Field>
+        </div>
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.row}>
           <Field label="Från period" size="small" style={{ flex: 1 }}>
             <Select
               size="small"
@@ -196,11 +181,7 @@ const ReportPanel: React.FC<ReportPanelProps> = ({ type, title }) => {
               ))}
             </Select>
           </Field>
-          <Field
-            label={type === "rr" ? "Till period" : "T.o.m. period"}
-            size="small"
-            style={{ flex: 1 }}
-          >
+          <Field label="Till period" size="small" style={{ flex: 1 }}>
             <Select
               size="small"
               value={toPeriod}
@@ -217,17 +198,13 @@ const ReportPanel: React.FC<ReportPanelProps> = ({ type, title }) => {
       </div>
 
       <div className={styles.section}>
-        <Field label="Jämförelse" size="small">
-          <Select
+        <Field label="Kostnadsställe (valfritt)" size="small">
+          <Input
             size="small"
-            value={comparison}
-            onChange={(_, d) =>
-              setComparison(d.value as "none" | "prior_year")
-            }
-          >
-            <option value="none">Ingen</option>
-            <option value="prior_year">Föregående år</option>
-          </Select>
+            placeholder="T.ex. SALJ"
+            value={costCenter}
+            onChange={(_, d) => setCostCenter(d.value)}
+          />
         </Field>
       </div>
 
@@ -258,4 +235,4 @@ const ReportPanel: React.FC<ReportPanelProps> = ({ type, title }) => {
   );
 };
 
-export default ReportPanel;
+export default HuvudbokPanel;

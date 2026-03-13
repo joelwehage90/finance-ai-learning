@@ -3,6 +3,9 @@
 Fetches SIE2 from Fortnox, parses it with sie_parser, and computes
 structured income statement (Resultaträkning) and balance sheet
 (Balansräkning) reports ready for Excel output.
+
+Also provides comparative versions that include prior-year columns
+with change amounts and percentages.
 """
 
 from collections import defaultdict
@@ -11,6 +14,13 @@ from typing import Any
 
 from fortnox_sie_client import FortnoxSIEClient
 from sie_parser import parse_sie
+
+
+def _pct_change(current: float, prior: float) -> float | None:
+    """Compute percentage change, returning None if prior is zero."""
+    if prior == 0:
+        return None
+    return round((current - prior) / abs(prior) * 100, 1)
 
 
 # ----------------------------------------------------------------
@@ -210,5 +220,250 @@ async def compute_balance_sheet(
         "totals": {
             "assets": round(assets_total, 2),
             "equity_and_liabilities": round(equity_liabilities_total, 2),
+        },
+    }
+
+
+# ----------------------------------------------------------------
+# Comparative report functions
+# ----------------------------------------------------------------
+
+def _sum_period_balances(
+    parsed: dict,
+    year_offset: int,
+    from_p: str,
+    to_p: str,
+    acct_from: int,
+    acct_to: int,
+) -> dict[int, float]:
+    """Sum period_balances for given year_offset and account range."""
+    totals: dict[int, float] = defaultdict(float)
+    for pb in parsed.get("period_balances", []):
+        if pb.get("year_offset", 0) != year_offset:
+            continue
+        period = pb.get("period", "")
+        account = pb.get("account")
+        if account is None or not (acct_from <= account <= acct_to):
+            continue
+        if from_p <= period <= to_p:
+            totals[account] += float(pb["amount"])
+    return totals
+
+
+def _compute_br_balances(
+    parsed: dict,
+    year_offset: int,
+    to_p: str,
+) -> dict[int, float]:
+    """Compute balance sheet balances for given year_offset.
+
+    IB (opening_balances) + accumulated period movements up to period.
+    """
+    balances: dict[int, float] = defaultdict(float)
+
+    for ib in parsed.get("opening_balances", []):
+        if ib.get("year_offset", 0) != year_offset:
+            continue
+        acct = ib.get("account")
+        if acct is not None and 1000 <= acct <= 2999:
+            balances[acct] += float(ib["amount"])
+
+    for pb in parsed.get("period_balances", []):
+        if pb.get("year_offset", 0) != year_offset:
+            continue
+        period = pb.get("period", "")
+        acct = pb.get("account")
+        if acct is None or not (1000 <= acct <= 2999):
+            continue
+        if period <= to_p:
+            balances[acct] += float(pb["amount"])
+
+    return balances
+
+
+async def compute_income_statement_comparative(
+    client: FortnoxSIEClient,
+    financial_year_id: int,
+    from_period: str,
+    to_period: str,
+) -> dict[str, Any]:
+    """Compute comparative income statement (RR) with prior year.
+
+    Returns rows with: Konto, Kontonamn, Aktuellt, Föreg. år,
+    Förändring SEK, Förändring %.
+
+    Args:
+        client: SIE client for fetching data from Fortnox.
+        financial_year_id: Fortnox financial year ID.
+        from_period: Start period inclusive, format "YYYY-MM".
+        to_period: End period inclusive, format "YYYY-MM".
+
+    Returns:
+        Dict with 'headers', 'rows', 'period', 'total', 'comparison_total'.
+    """
+    sie_text = await client.get_sie(sie_type=2, financial_year=financial_year_id)
+    parsed = parse_sie(sie_text)
+
+    from_p = from_period.replace("-", "")
+    to_p = to_period.replace("-", "")
+
+    # Current year (year_offset=0) and prior year (year_offset=-1).
+    current = _sum_period_balances(parsed, 0, from_p, to_p, 3000, 8999)
+    prior = _sum_period_balances(parsed, -1, from_p, to_p, 3000, 8999)
+
+    accounts = parsed.get("accounts", {})
+    all_accounts = sorted(set(current.keys()) | set(prior.keys()))
+
+    headers = ["Konto", "Kontonamn", "Aktuellt", "Föreg. år", "Förändring SEK", "Förändring %"]
+    rows: list[list[Any]] = []
+    grand_current = 0.0
+    grand_prior = 0.0
+
+    for _code, range_from, range_to, group_label in RR_GROUPS:
+        group_rows: list[list[Any]] = []
+        grp_current = 0.0
+        grp_prior = 0.0
+
+        for acct in all_accounts:
+            if not (range_from <= acct <= range_to):
+                continue
+            cur = round(current.get(acct, 0.0), 2)
+            pri = round(prior.get(acct, 0.0), 2)
+            if cur == 0 and pri == 0:
+                continue
+            change = round(cur - pri, 2)
+            pct = _pct_change(cur, pri)
+            name = accounts.get(acct, {}).get("name", "")
+            group_rows.append([acct, name, cur, pri, change, pct])
+            grp_current += cur
+            grp_prior += pri
+
+        if group_rows:
+            rows.append([None, f"— {group_label} —", None, None, None, None])
+            rows.extend(group_rows)
+            grp_change = round(grp_current - grp_prior, 2)
+            grp_pct = _pct_change(grp_current, grp_prior)
+            rows.append([
+                None, f"Summa {group_label}",
+                round(grp_current, 2), round(grp_prior, 2),
+                grp_change, grp_pct,
+            ])
+            rows.append([None, "", None, None, None, None])
+            grand_current += grp_current
+            grand_prior += grp_prior
+
+    grand_change = round(grand_current - grand_prior, 2)
+    grand_pct = _pct_change(grand_current, grand_prior)
+    rows.append([
+        None, "RESULTAT",
+        round(grand_current, 2), round(grand_prior, 2),
+        grand_change, grand_pct,
+    ])
+
+    return {
+        "headers": headers,
+        "rows": rows,
+        "period": f"{from_period} – {to_period}",
+        "total": round(grand_current, 2),
+        "comparison_total": round(grand_prior, 2),
+    }
+
+
+async def compute_balance_sheet_comparative(
+    client: FortnoxSIEClient,
+    financial_year_id: int,
+    period: str,
+) -> dict[str, Any]:
+    """Compute comparative balance sheet (BR) with prior year.
+
+    Returns rows with: Konto, Kontonamn, Aktuellt, Föreg. år,
+    Förändring SEK, Förändring %.
+
+    Args:
+        client: SIE client for fetching data from Fortnox.
+        financial_year_id: Fortnox financial year ID.
+        period: Period to show balance for, format "YYYY-MM".
+
+    Returns:
+        Dict with 'headers', 'rows', 'period', 'totals', 'comparison_totals'.
+    """
+    sie_text = await client.get_sie(sie_type=2, financial_year=financial_year_id)
+    parsed = parse_sie(sie_text)
+
+    to_p = period.replace("-", "")
+
+    current = _compute_br_balances(parsed, 0, to_p)
+    prior = _compute_br_balances(parsed, -1, to_p)
+
+    accounts = parsed.get("accounts", {})
+    all_accounts = sorted(set(current.keys()) | set(prior.keys()))
+
+    headers = ["Konto", "Kontonamn", "Aktuellt", "Föreg. år", "Förändring SEK", "Förändring %"]
+    rows: list[list[Any]] = []
+
+    assets_cur = 0.0
+    assets_pri = 0.0
+    el_cur = 0.0
+    el_pri = 0.0
+
+    for _code, range_from, range_to, group_label in BR_GROUPS:
+        group_rows: list[list[Any]] = []
+        grp_cur = 0.0
+        grp_pri = 0.0
+
+        for acct in all_accounts:
+            if not (range_from <= acct <= range_to):
+                continue
+            cur = round(current.get(acct, 0.0), 2)
+            pri = round(prior.get(acct, 0.0), 2)
+            if cur == 0 and pri == 0:
+                continue
+            change = round(cur - pri, 2)
+            pct = _pct_change(cur, pri)
+            name = accounts.get(acct, {}).get("name", "")
+            group_rows.append([acct, name, cur, pri, change, pct])
+            grp_cur += cur
+            grp_pri += pri
+
+        if group_rows:
+            rows.append([None, f"— {group_label} —", None, None, None, None])
+            rows.extend(group_rows)
+            grp_change = round(grp_cur - grp_pri, 2)
+            grp_pct = _pct_change(grp_cur, grp_pri)
+            rows.append([
+                None, f"Summa {group_label}",
+                round(grp_cur, 2), round(grp_pri, 2),
+                grp_change, grp_pct,
+            ])
+            rows.append([None, "", None, None, None, None])
+
+            if range_from < 2000:
+                assets_cur += grp_cur
+                assets_pri += grp_pri
+            else:
+                el_cur += grp_cur
+                el_pri += grp_pri
+
+    a_change = round(assets_cur - assets_pri, 2)
+    a_pct = _pct_change(assets_cur, assets_pri)
+    e_change = round(el_cur - el_pri, 2)
+    e_pct = _pct_change(el_cur, el_pri)
+
+    rows.append([None, "SUMMA TILLGÅNGAR",
+                 round(assets_cur, 2), round(assets_pri, 2), a_change, a_pct])
+    rows.append([None, "SUMMA EGET KAPITAL OCH SKULDER",
+                 round(el_cur, 2), round(el_pri, 2), e_change, e_pct])
+
+    return {
+        "headers": headers,
+        "rows": rows,
+        "period": period,
+        "totals": {
+            "assets": round(assets_cur, 2),
+            "equity_and_liabilities": round(el_cur, 2),
+        },
+        "comparison_totals": {
+            "assets": round(assets_pri, 2),
+            "equity_and_liabilities": round(el_pri, 2),
         },
     }

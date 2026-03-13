@@ -1,8 +1,8 @@
 """Excel Add-in Backend — FastAPI server for Fortnox data.
 
-Serves LRK, KRK, Resultaträkning and Balansräkning data to the
-Excel taskpane frontend. Reuses FortnoxClient, FortnoxSIEClient
-and sie_parser from the existing codebase.
+Serves LRK, KRK, Resultaträkning, Balansräkning, Huvudbok, and
+comparative reports to the Excel taskpane frontend. Reuses
+FortnoxClient, FortnoxSIEClient and sie_parser from the existing codebase.
 
 Usage:
     uvicorn main:app --reload --port 8000
@@ -88,10 +88,12 @@ app.add_middleware(
 from routers.meta import router as meta_router  # noqa: E402
 from routers.invoices import router as invoices_router  # noqa: E402
 from routers.reports import router as reports_router  # noqa: E402
+from routers.huvudbok import router as huvudbok_router  # noqa: E402
 
 app.include_router(meta_router, prefix="/api")
 app.include_router(invoices_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
+app.include_router(huvudbok_router, prefix="/api")
 
 
 @app.get("/health")

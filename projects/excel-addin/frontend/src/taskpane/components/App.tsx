@@ -10,6 +10,7 @@ import {
 } from "@fluentui/react-components";
 import InvoicePanel from "./InvoicePanel";
 import ReportPanel from "./ReportPanel";
+import HuvudbokPanel from "./HuvudbokPanel";
 
 const useStyles = makeStyles({
   root: {
@@ -29,7 +30,7 @@ const useStyles = makeStyles({
   },
 });
 
-type TabValue = "lrk" | "krk" | "rr" | "br";
+type TabValue = "lrk" | "krk" | "rr" | "br" | "huvudbok";
 
 const App: React.FC = () => {
   const styles = useStyles();
@@ -53,6 +54,7 @@ const App: React.FC = () => {
           <Tab value="krk">KRK</Tab>
           <Tab value="rr">RR</Tab>
           <Tab value="br">BR</Tab>
+          <Tab value="huvudbok">Huvudbok</Tab>
         </TabList>
       </div>
 
@@ -89,6 +91,7 @@ const App: React.FC = () => {
         )}
         {activeTab === "rr" && <ReportPanel type="rr" title="Resultaträkning" />}
         {activeTab === "br" && <ReportPanel type="br" title="Balansräkning" />}
+        {activeTab === "huvudbok" && <HuvudbokPanel />}
       </div>
     </div>
   );

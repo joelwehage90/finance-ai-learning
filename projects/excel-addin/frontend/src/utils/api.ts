@@ -86,3 +86,37 @@ export async function getBR(params: {
 }): Promise<ReportData> {
   return fetchJson<ReportData>("/br", params);
 }
+
+// ----------------------------------------------------------------
+// Huvudbok
+// ----------------------------------------------------------------
+
+export async function getHuvudbok(params: {
+  financial_year_id: string;
+  from_account: string;
+  to_account: string;
+  from_period: string;
+  to_period: string;
+  cost_center?: string;
+}): Promise<TableData> {
+  return fetchJson<TableData>("/huvudbok", params as Record<string, string>);
+}
+
+// ----------------------------------------------------------------
+// Comparative reports (vs prior year)
+// ----------------------------------------------------------------
+
+export async function getRRComparative(params: {
+  financial_year_id: string;
+  from_period: string;
+  to_period: string;
+}): Promise<ReportData> {
+  return fetchJson<ReportData>("/rr-comparative", params);
+}
+
+export async function getBRComparative(params: {
+  financial_year_id: string;
+  period: string;
+}): Promise<ReportData> {
+  return fetchJson<ReportData>("/br-comparative", params);
+}

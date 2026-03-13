@@ -469,5 +469,184 @@ def _format_report(title: str, headers: list, rows: list, footer: str) -> str:
     return output
 
 
+# ----------------------------------------------------------------
+# Huvudbok (General Ledger) from SIE4
+# ----------------------------------------------------------------
+
+@mcp.tool()
+async def get_huvudbok(
+    from_account: int,
+    to_account: int,
+    from_period: str,
+    to_period: str,
+    cost_center: Optional[str] = None,
+    financial_year_date: Optional[str] = None,
+) -> str:
+    """Get Huvudbok (general ledger) from Fortnox SIE4 data.
+
+    Shows all voucher transactions for the selected account range
+    and period, with running balance per account. Each account block
+    shows opening balance, individual transactions, and closing balance.
+
+    Args:
+        from_account: Start of account range (e.g. 1000).
+        to_account: End of account range (e.g. 1999).
+        from_period: Start period inclusive (YYYY-MM), e.g. "2026-01".
+        to_period: End period inclusive (YYYY-MM), e.g. "2026-03".
+        cost_center: Optional cost center filter (dimension 1).
+        financial_year_date: A date within the financial year (YYYY-MM-DD).
+            Defaults to first day of from_period if not specified.
+    """
+    from huvudbok_service import compute_general_ledger
+
+    sie_client = _get_sie_client()
+
+    fy_date = financial_year_date or f"{from_period}-01"
+    fy_id = await sie_client.get_financial_year_id(fy_date)
+
+    result = await compute_general_ledger(
+        client=sie_client,
+        financial_year_id=fy_id,
+        from_account=from_account,
+        to_account=to_account,
+        from_period=from_period,
+        to_period=to_period,
+        cost_center=cost_center,
+    )
+
+    summary = (
+        f"Huvudbok konto {from_account}–{to_account}, "
+        f"period {result['period']}: {result['count']} rader."
+    )
+    return _format_ledger(result["headers"], result["rows"], summary)
+
+
+# ----------------------------------------------------------------
+# Comparative reports — RR and BR with prior year
+# ----------------------------------------------------------------
+
+@mcp.tool()
+async def get_resultatrakning_comparative(
+    from_period: str,
+    to_period: str,
+    financial_year_date: Optional[str] = None,
+) -> str:
+    """Get comparative Resultaträkning (income statement) with prior year.
+
+    Shows current year, prior year, change in SEK and percentage
+    for each account, grouped by BAS account classes.
+
+    Args:
+        from_period: Start period inclusive (YYYY-MM), e.g. "2026-01".
+        to_period: End period inclusive (YYYY-MM), e.g. "2026-03".
+        financial_year_date: A date within the financial year (YYYY-MM-DD).
+            Defaults to first day of from_period if not specified.
+    """
+    from sie_report_service import compute_income_statement_comparative
+
+    sie_client = _get_sie_client()
+
+    fy_date = financial_year_date or f"{from_period}-01"
+    fy_id = await sie_client.get_financial_year_id(fy_date)
+
+    result = await compute_income_statement_comparative(
+        client=sie_client,
+        financial_year_id=fy_id,
+        from_period=from_period,
+        to_period=to_period,
+    )
+
+    return _format_comparative_report(
+        f"Resultaträkning (jämförelse) {result['period']}",
+        result["rows"],
+        f"Resultat aktuellt: {result['total']:,.2f} SEK, "
+        f"föreg. år: {result['comparison_total']:,.2f} SEK",
+    )
+
+
+@mcp.tool()
+async def get_balansrakning_comparative(
+    period: str,
+    financial_year_date: Optional[str] = None,
+) -> str:
+    """Get comparative Balansräkning (balance sheet) with prior year.
+
+    Shows current year, prior year, change in SEK and percentage
+    for each account, grouped by BR categories.
+
+    Args:
+        period: Balance date period (YYYY-MM), e.g. "2026-03".
+        financial_year_date: A date within the financial year (YYYY-MM-DD).
+            Defaults to first day of period if not specified.
+    """
+    from sie_report_service import compute_balance_sheet_comparative
+
+    sie_client = _get_sie_client()
+
+    fy_date = financial_year_date or f"{period}-01"
+    fy_id = await sie_client.get_financial_year_id(fy_date)
+
+    result = await compute_balance_sheet_comparative(
+        client=sie_client,
+        financial_year_id=fy_id,
+        period=period,
+    )
+
+    totals = result.get("totals", {})
+    comp = result.get("comparison_totals", {})
+    footer = (
+        f"Tillgångar: {totals.get('assets', 0):,.2f} SEK "
+        f"(föreg. år: {comp.get('assets', 0):,.2f})\n"
+        f"EK + skulder: {totals.get('equity_and_liabilities', 0):,.2f} SEK "
+        f"(föreg. år: {comp.get('equity_and_liabilities', 0):,.2f})"
+    )
+
+    return _format_comparative_report(
+        f"Balansräkning (jämförelse) per {result['period']}",
+        result["rows"],
+        footer,
+    )
+
+
+def _format_comparative_report(title: str, rows: list, footer: str) -> str:
+    """Format a comparative report as readable text for Claude."""
+    output = f"=== {title} ===\n\n"
+    output += f"{'Konto':>6} {'Kontonamn':<35} {'Aktuellt':>12} {'Föreg.år':>12} {'Förändring':>12} {'%':>8}\n"
+    output += "-" * 90 + "\n"
+
+    for row in rows:
+        account = row[0]
+        name = row[1] or ""
+        current = row[2]
+        prior = row[3]
+        change = row[4]
+        pct = row[5]
+
+        if account is None and current is None:
+            # Section header or blank row.
+            if name:
+                output += f"\n{name}\n"
+        elif account is None and current is not None:
+            # Subtotal or total row.
+            pct_str = f"{pct:.1f}%" if pct is not None else "—"
+            output += (
+                f"{'':>6} {name:<35} {current:>12,.2f} {prior:>12,.2f} "
+                f"{change:>12,.2f} {pct_str:>8}\n"
+            )
+        else:
+            # Regular account row.
+            pct_str = f"{pct:.1f}%" if pct is not None else "—"
+            cur_str = f"{current:,.2f}" if current else "0.00"
+            pri_str = f"{prior:,.2f}" if prior else "0.00"
+            chg_str = f"{change:,.2f}" if change else "0.00"
+            output += (
+                f"{account:>6d} {name:<35} {cur_str:>12} {pri_str:>12} "
+                f"{chg_str:>12} {pct_str:>8}\n"
+            )
+
+    output += f"\n{footer}\n"
+    return output
+
+
 if __name__ == "__main__":
     mcp.run()

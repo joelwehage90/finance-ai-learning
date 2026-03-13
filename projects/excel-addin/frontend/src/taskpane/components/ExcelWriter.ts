@@ -17,7 +17,8 @@ export async function writeToSheet(
   sheetName: string,
   headers: string[],
   rows: (string | number | boolean | null)[][],
-  amountColumns?: string[]
+  amountColumns?: string[],
+  percentColumns?: string[]
 ): Promise<void> {
   await Excel.run(async (context) => {
     const sheets = context.workbook.worksheets;
@@ -71,6 +72,20 @@ export async function writeToSheet(
             `${colLetter}2:${colLetter}${allData.length}`
           );
           amountRange.numberFormat = [["#,##0.00"]];
+        }
+      }
+    }
+
+    // Format percent columns with one decimal.
+    if (percentColumns && percentColumns.length > 0) {
+      for (const colName of percentColumns) {
+        const colIndex = headers.indexOf(colName);
+        if (colIndex >= 0) {
+          const colLetter = String.fromCharCode(65 + colIndex);
+          const pctRange = sheet.getRange(
+            `${colLetter}2:${colLetter}${allData.length}`
+          );
+          pctRange.numberFormat = [["0.0"]];
         }
       }
     }
