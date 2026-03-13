@@ -110,6 +110,25 @@ class FortnoxSeeder:
 
     # --- Financial years ---
 
+    async def resolve_fiscal_year_id(self, parsed: dict) -> int | None:
+        """Find the Fortnox fiscal year ID for the SIE file's primary year.
+
+        Returns the Fortnox internal ID (e.g. 1 for 2025, 2 for 2026).
+        Needed because Fortnox scopes accounts per fiscal year.
+        """
+        for fy in parsed.get("financial_years", []):
+            if fy.get("year_offset") == 0:
+                start = fy.get("start", "")
+                if len(start) >= 8:
+                    date_fmt = f"{start[:4]}-{start[4:6]}-{start[6:8]}"
+                    result = await self._api_get(
+                        "/financialyears", params={"date": date_fmt}
+                    )
+                    years = result.get("FinancialYears", []) if result else []
+                    if years:
+                        return years[0]["Id"]
+        return None
+
     async def ensure_financial_years(self, parsed: dict) -> None:
         """Check that required financial years exist in Fortnox."""
         print("\n📅 Checking financial years...")
@@ -185,14 +204,22 @@ class FortnoxSeeder:
 
     # --- Accounts ---
 
-    async def seed_accounts(self, parsed: dict) -> None:
+    async def seed_accounts(self, parsed: dict,
+                            fiscal_year_id: int | None = None) -> None:
         """Create accounts from SIE chart of accounts.
 
         Also activates existing but inactive accounts via PUT,
         since Fortnox rejects vouchers referencing inactive accounts.
+
+        Args:
+            fiscal_year_id: Fortnox fiscal year ID to scope accounts to.
+                Fortnox manages chart of accounts per fiscal year, so
+                this must match the year of the vouchers being seeded.
         """
         accounts = parsed.get("accounts", {})
-        print(f"\n📊 Seeding {len(accounts)} accounts (create or activate)...")
+        fy_suffix = f"?financialyear={fiscal_year_id}" if fiscal_year_id else ""
+        fy_label = f" (fy={fiscal_year_id})" if fiscal_year_id else ""
+        print(f"\n📊 Seeding {len(accounts)} accounts{fy_label} (create or activate)...")
         activated = 0
 
         for i, (acct_num, acct_data) in enumerate(sorted(accounts.items())):
@@ -218,18 +245,18 @@ class FortnoxSeeder:
                 body["Account"]["SRU"] = acct_data["sru"]
 
             try:
-                result = await self._api_post("/accounts", body)
+                result = await self._api_post(f"/accounts{fy_suffix}", body)
                 if result:
                     self.stats["accounts_created"] += 1
                 else:
                     # Already exists — activate via PUT
-                    await self._api_put(f"/accounts/{acct_num}", body)
+                    await self._api_put(f"/accounts/{acct_num}{fy_suffix}", body)
                     activated += 1
                     self.stats["accounts_skipped"] += 1
             except Exception as e:
                 # Already exists — try to activate via PUT
                 try:
-                    await self._api_put(f"/accounts/{acct_num}", body)
+                    await self._api_put(f"/accounts/{acct_num}{fy_suffix}", body)
                     activated += 1
                 except Exception:
                     self.stats["accounts_failed"] += 1
@@ -339,17 +366,23 @@ class FortnoxSeeder:
     # --- Vouchers ---
 
     async def seed_vouchers(self, parsed: dict, strip_dimensions: bool = False,
-                            force_series: str | None = None) -> None:
+                            force_series: str | None = None,
+                            offset: int = 0) -> None:
         """Create vouchers with their transaction rows."""
         vouchers = parsed.get("vouchers", [])
+        total = len(vouchers)
         extra = ""
+        if offset:
+            extra += f", skipping first {offset}"
         if strip_dimensions:
             extra += ", without CC/project"
         if force_series:
             extra += f", all mapped to series {force_series}"
-        print(f"\n📝 Seeding {len(vouchers)} vouchers{extra}...")
+        print(f"\n📝 Seeding {total - offset}/{total} vouchers{extra}...")
 
         for i, ver in enumerate(vouchers):
+            if i < offset:
+                continue
             series = force_series or ver.get("series", "A")
             date_raw = ver.get("date", "")
             text = ver.get("text", "")
@@ -435,7 +468,8 @@ class FortnoxSeeder:
 
     async def seed_all(self, parsed: dict, skip_vouchers: bool = False,
                        strip_dimensions: bool = False,
-                       force_series: str | None = None) -> None:
+                       force_series: str | None = None,
+                       offset: int = 0) -> None:
         """Run the full seeding pipeline in correct order."""
         print("=" * 60)
         print("Fortnox Sandbox Seeder")
@@ -455,11 +489,16 @@ class FortnoxSeeder:
         # 1. Financial years must exist first
         await self.ensure_financial_years(parsed)
 
+        # Resolve Fortnox fiscal year ID (accounts are per fiscal year)
+        fy_id = await self.resolve_fiscal_year_id(parsed)
+        if fy_id:
+            print(f"\n🔑 Fortnox fiscal year ID: {fy_id}")
+
         # 2. Voucher series
         await self.ensure_voucher_series(parsed)
 
-        # 3. Accounts (needed before vouchers)
-        await self.seed_accounts(parsed)
+        # 3. Accounts (needed before vouchers, scoped to fiscal year)
+        await self.seed_accounts(parsed, fiscal_year_id=fy_id)
 
         # 4. Cost centers (dim 1)
         await self.seed_cost_centers(parsed)
@@ -472,7 +511,8 @@ class FortnoxSeeder:
             print("\n⏭️  Skipping vouchers (--skip-vouchers)")
         else:
             await self.seed_vouchers(parsed, strip_dimensions=strip_dimensions,
-                                       force_series=force_series)
+                                       force_series=force_series,
+                                       offset=offset)
 
         elapsed = time.time() - start_time
         print(f"\n{'=' * 60}")
@@ -520,6 +560,7 @@ async def run(args: argparse.Namespace) -> None:
             skip_vouchers=args.skip_vouchers,
             strip_dimensions=args.strip_dimensions,
             force_series=args.force_series,
+            offset=args.offset,
         )
     finally:
         await client.close()
@@ -554,6 +595,12 @@ if __name__ == "__main__":
         default=None,
         help="Force all vouchers into this series (e.g., 'A'). "
              "Workaround for non-manual series in sandbox.",
+    )
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="Skip the first N vouchers (resume after interrupted run).",
     )
     args = parser.parse_args()
 
