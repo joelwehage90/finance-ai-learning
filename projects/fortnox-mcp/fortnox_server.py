@@ -1,4 +1,9 @@
-"""Fortnox MCP Server — Exposes Fortnox API as tools for Claude."""
+"""Fortnox MCP Server — Exposes Fortnox API as tools for Claude.
+
+Provides tools for querying invoices, customers, accounts, and
+financial reports from Fortnox. Includes LRK/KRK ledgers and
+RR/BR reports computed from SIE2 data.
+"""
 
 import os
 import json
@@ -9,11 +14,18 @@ from typing import Optional
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 
-# Ensure imports work regardless of working directory
+# Ensure imports work regardless of working directory.
+# We need fortnox-mcp (this dir), sie-pipeline (SIE parsing),
+# and excel-addin services (RR/BR computation).
 _THIS_DIR = Path(__file__).resolve().parent
+_SIE_PIPELINE_DIR = _THIS_DIR.parent / "sie-pipeline"
+_EXCEL_SERVICES_DIR = _THIS_DIR.parent / "excel-addin" / "backend" / "services"
 sys.path.insert(0, str(_THIS_DIR))
+sys.path.insert(0, str(_SIE_PIPELINE_DIR))
+sys.path.insert(0, str(_EXCEL_SERVICES_DIR))
 
 from fortnox_client import FortnoxClient
+from fortnox_sie_client import FortnoxSIEClient
 
 # Load .env from the server's own directory
 load_dotenv(_THIS_DIR / ".env")
@@ -22,25 +34,42 @@ mcp = FastMCP(
     "Fortnox",
     instructions=(
         "Fortnox accounting API integration for Swedish companies. "
-        "Use these tools to query invoices, customers, accounts and "
-        "company information from Fortnox. All financial data follows "
+        "Use these tools to query invoices, customers, accounts, "
+        "company information, and financial reports from Fortnox. "
+        "Includes LRK (leverantörsreskontra), KRK (kundreskontra), "
+        "Resultaträkning and Balansräkning. All financial data follows "
         "the BAS account plan (Swedish standard)."
     ),
 )
 
-# Lazy-initialized client (created on first tool call)
+# Lazy-initialized clients (created on first tool call)
 _client: Optional[FortnoxClient] = None
+_sie_client: Optional[FortnoxSIEClient] = None
+
+
+def _get_credentials() -> tuple[str, str, str]:
+    """Get Fortnox credentials from environment."""
+    return (
+        os.environ["FORTNOX_CLIENT_ID"],
+        os.environ["FORTNOX_CLIENT_SECRET"],
+        os.environ["FORTNOX_TENANT_ID"],
+    )
 
 
 def _get_client() -> FortnoxClient:
     """Get or create the Fortnox API client."""
     global _client
     if _client is None:
-        client_id = os.environ["FORTNOX_CLIENT_ID"]
-        client_secret = os.environ["FORTNOX_CLIENT_SECRET"]
-        tenant_id = os.environ["FORTNOX_TENANT_ID"]
-        _client = FortnoxClient(client_id, client_secret, tenant_id)
+        _client = FortnoxClient(*_get_credentials())
     return _client
+
+
+def _get_sie_client() -> FortnoxSIEClient:
+    """Get or create the Fortnox SIE client."""
+    global _sie_client
+    if _sie_client is None:
+        _sie_client = FortnoxSIEClient(*_get_credentials())
+    return _sie_client
 
 
 def _format_response(data: dict | list, summary: str = "") -> str:
@@ -232,6 +261,212 @@ async def get_company_info() -> str:
     data = await client.get("/companyinformation")
     info = data.get("CompanyInformation", data)
     return _format_response(info)
+
+
+# ----------------------------------------------------------------
+# Ledger tools — LRK (supplier) and KRK (customer) with all invoices
+# ----------------------------------------------------------------
+
+@mcp.tool()
+async def get_lrk(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    statuses: Optional[str] = None,
+) -> str:
+    """Get full leverantörsreskontra (supplier invoice ledger).
+
+    Fetches ALL supplier invoices (paginated), enriches with derived
+    status, and optionally filters client-side. Returns a complete
+    table suitable for analysis.
+
+    Args:
+        from_date: Start date filter (YYYY-MM-DD). Optional.
+        to_date: End date filter (YYYY-MM-DD). Optional.
+        statuses: Comma-separated status filters. Options:
+            booked, unbooked, cancelled, fullypaid, unpaid, unpaidoverdue.
+            Leave empty for all invoices.
+    """
+    from invoice_service import fetch_supplier_invoices
+
+    client = _get_client()
+    status_list = statuses.split(",") if statuses else None
+
+    result = await fetch_supplier_invoices(
+        client=client,
+        from_date=from_date,
+        to_date=to_date,
+        statuses=status_list,
+    )
+
+    summary = f"Leverantörsreskontra: {result['count']} fakturor."
+    if from_date or to_date:
+        summary += f" Period: {from_date or '...'} – {to_date or '...'}."
+    if statuses:
+        summary += f" Filter: {statuses}."
+
+    # Format as readable table for Claude.
+    return _format_ledger(result["headers"], result["rows"], summary)
+
+
+@mcp.tool()
+async def get_krk(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    statuses: Optional[str] = None,
+) -> str:
+    """Get full kundreskontra (customer invoice ledger).
+
+    Fetches ALL customer invoices (paginated), enriches with derived
+    status, and optionally filters client-side. Returns a complete
+    table suitable for analysis.
+
+    Args:
+        from_date: Start date filter (YYYY-MM-DD). Optional.
+        to_date: End date filter (YYYY-MM-DD). Optional.
+        statuses: Comma-separated status filters. Options:
+            booked, unbooked, cancelled, fullypaid, unpaid, unpaidoverdue.
+            Leave empty for all invoices.
+    """
+    from invoice_service import fetch_customer_invoices
+
+    client = _get_client()
+    status_list = statuses.split(",") if statuses else None
+
+    result = await fetch_customer_invoices(
+        client=client,
+        from_date=from_date,
+        to_date=to_date,
+        statuses=status_list,
+    )
+
+    summary = f"Kundreskontra: {result['count']} fakturor."
+    if from_date or to_date:
+        summary += f" Period: {from_date or '...'} – {to_date or '...'}."
+    if statuses:
+        summary += f" Filter: {statuses}."
+
+    return _format_ledger(result["headers"], result["rows"], summary)
+
+
+def _format_ledger(headers: list, rows: list, summary: str) -> str:
+    """Format ledger data as a readable text table for Claude."""
+    output = summary + "\n\n"
+    output += " | ".join(str(h) for h in headers) + "\n"
+    output += "-" * 80 + "\n"
+    for row in rows:
+        output += " | ".join(str(v) if v is not None else "" for v in row) + "\n"
+    return output
+
+
+# ----------------------------------------------------------------
+# Financial report tools — RR and BR from SIE2
+# ----------------------------------------------------------------
+
+@mcp.tool()
+async def get_resultatrakning(
+    from_period: str,
+    to_period: str,
+    financial_year_date: Optional[str] = None,
+) -> str:
+    """Get Resultaträkning (income statement) from Fortnox SIE2 data.
+
+    Computes the income statement by summing period balances for
+    accounts 3000-8999, grouped by BAS account classes.
+
+    Args:
+        from_period: Start period inclusive (YYYY-MM), e.g. "2026-01".
+        to_period: End period inclusive (YYYY-MM), e.g. "2026-03".
+        financial_year_date: A date within the financial year (YYYY-MM-DD).
+            Defaults to first day of from_period if not specified.
+    """
+    from sie_report_service import compute_income_statement
+
+    sie_client = _get_sie_client()
+
+    # Resolve financial year ID.
+    fy_date = financial_year_date or f"{from_period}-01"
+    fy_id = await sie_client.get_financial_year_id(fy_date)
+
+    result = await compute_income_statement(
+        client=sie_client,
+        financial_year_id=fy_id,
+        from_period=from_period,
+        to_period=to_period,
+    )
+
+    return _format_report(
+        f"Resultaträkning {result['period']}",
+        result["headers"],
+        result["rows"],
+        f"Resultat: {result['total']:,.2f} SEK",
+    )
+
+
+@mcp.tool()
+async def get_balansrakning(
+    period: str,
+    financial_year_date: Optional[str] = None,
+) -> str:
+    """Get Balansräkning (balance sheet) from Fortnox SIE2 data.
+
+    Computes the balance sheet by adding opening balances (IB) to
+    accumulated period movements up to the specified period, for
+    accounts 1000-2999.
+
+    Args:
+        period: Balance date period (YYYY-MM), e.g. "2026-03".
+        financial_year_date: A date within the financial year (YYYY-MM-DD).
+            Defaults to first day of period if not specified.
+    """
+    from sie_report_service import compute_balance_sheet
+
+    sie_client = _get_sie_client()
+
+    fy_date = financial_year_date or f"{period}-01"
+    fy_id = await sie_client.get_financial_year_id(fy_date)
+
+    result = await compute_balance_sheet(
+        client=sie_client,
+        financial_year_id=fy_id,
+        period=period,
+    )
+
+    totals = result.get("totals", {})
+    footer = (
+        f"Summa tillgångar: {totals.get('assets', 0):,.2f} SEK\n"
+        f"Summa EK + skulder: {totals.get('equity_and_liabilities', 0):,.2f} SEK"
+    )
+
+    return _format_report(
+        f"Balansräkning per {result['period']}",
+        result["headers"],
+        result["rows"],
+        footer,
+    )
+
+
+def _format_report(title: str, headers: list, rows: list, footer: str) -> str:
+    """Format a financial report as readable text for Claude."""
+    output = f"=== {title} ===\n\n"
+
+    for row in rows:
+        account = row[0]
+        name = row[1] or ""
+        amount = row[2]
+
+        if account is None and amount is None:
+            # Section header or blank row.
+            if name:
+                output += f"\n{name}\n"
+        elif account is None and amount is not None:
+            # Subtotal or total row — bold-style.
+            output += f"{'':>6s} {name:<45s} {amount:>15,.2f}\n"
+        else:
+            # Regular account row.
+            output += f"{account:>6d} {name:<45s} {amount:>15,.2f}\n"
+
+    output += f"\n{footer}\n"
+    return output
 
 
 if __name__ == "__main__":
