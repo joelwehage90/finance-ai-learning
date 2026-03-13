@@ -45,11 +45,17 @@ class FortnoxSIEClient(FortnoxClient):
         Raises:
             RuntimeError: If the request fails after 3 retries.
         """
+        # Auto-resolve financial year if not provided
+        if financial_year is None:
+            from datetime import date
+            financial_year = await self.get_financial_year_id(
+                date.today().isoformat()
+            )
+            print(f"Auto-resolved financial year ID: {financial_year}")
+
         await self._ensure_token()
 
-        params: dict = {}
-        if financial_year is not None:
-            params["financialyear"] = financial_year
+        params: dict = {"financialyear": financial_year}
 
         for attempt in range(3):
             response = await self._http.request(
@@ -58,7 +64,9 @@ class FortnoxSIEClient(FortnoxClient):
                 params=params,
                 headers={
                     "Authorization": f"Bearer {self._access_token}",
-                    "Accept": "text/plain",
+                    # Fortnox SIE endpoint rejects text/plain but returns
+                    # raw SIE text (CP437) when Accept is application/json.
+                    "Accept": "application/json",
                 },
             )
 

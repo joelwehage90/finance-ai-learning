@@ -28,16 +28,26 @@ from supabase import create_client, Client
 class SupabaseLoader:
     """Loads parsed SIE data into Supabase."""
 
-    def __init__(self, url: str, key: str, tenant_id: str):
+    def __init__(
+        self,
+        url: str,
+        key: str,
+        tenant_id: str,
+        source_system: str | None = None,
+    ):
         """Initialize loader.
 
         Args:
             url: Supabase project URL (e.g. https://xxx.supabase.co).
             key: Supabase service role key (bypasses RLS).
-            tenant_id: UUID of the tenant in the tenants table.
+            tenant_id: Tenant identifier (e.g. "1803399_fortnox").
+            source_system: Source system name (e.g. "fortnox", "visma").
+                Used to tag dimension_types so different systems can
+                coexist in the same database.
         """
         self._client: Client = create_client(url, key)
         self._tenant_id = tenant_id
+        self._source_system = source_system
 
     def load_all(self, parsed: dict[str, Any], year_id: int) -> dict[str, int]:
         """Load all parsed SIE data into Supabase.
@@ -55,6 +65,9 @@ class SupabaseLoader:
             parsed.get("financial_years", [])
         )
         counts["accounts"] = self._load_accounts(parsed.get("accounts", {}))
+        counts["dimension_types"] = self._load_dimension_types(
+            parsed.get("dimensions", {})
+        )
         counts["dimensions"] = self._load_dimensions(
             parsed.get("dimensions", {}),
             parsed.get("objects", []),
@@ -120,7 +133,7 @@ class SupabaseLoader:
         return len(rows)
 
     def _load_accounts(self, accounts: dict[int, dict]) -> int:
-        """Load chart of accounts."""
+        """Load chart of accounts and deactivate removed accounts."""
         rows = [
             {
                 "tenant_id": self._tenant_id,
@@ -135,6 +148,69 @@ class SupabaseLoader:
 
         if rows:
             self._batch_upsert("accounts", rows)
+
+        # Deactivate accounts that no longer appear in the SIE file.
+        loaded_numbers = set(accounts.keys())
+        deactivated = self._deactivate_missing_accounts(loaded_numbers)
+        if deactivated > 0:
+            print(f"  Deactivated {deactivated} accounts no longer in SIE")
+
+        return len(rows)
+
+    def _deactivate_missing_accounts(self, loaded_numbers: set[int]) -> int:
+        """Mark accounts as inactive if they are not in the SIE file.
+
+        Only sets active=False — rows are never deleted. This is safe
+        for historical data and can be used as a filter in future UIs.
+        """
+        # Fetch all currently active accounts for this tenant.
+        response = (
+            self._client.table("accounts")
+            .select("account_number")
+            .eq("tenant_id", self._tenant_id)
+            .eq("active", True)
+            .execute()
+        )
+
+        existing_active = {row["account_number"] for row in response.data}
+        missing = existing_active - loaded_numbers
+
+        if not missing:
+            return 0
+
+        # Deactivate in batches.
+        missing_list = list(missing)
+        for i in range(0, len(missing_list), 500):
+            chunk = missing_list[i : i + 500]
+            (
+                self._client.table("accounts")
+                .update({"active": False})
+                .eq("tenant_id", self._tenant_id)
+                .in_("account_number", chunk)
+                .execute()
+            )
+
+        return len(missing)
+
+    def _load_dimension_types(self, dimensions: dict[int, dict]) -> int:
+        """Load dimension type definitions from SIE #DIM tags.
+
+        Maps dimension_id to a human-readable name (e.g. 1 -> "Kostnadsställe").
+        The source_system column tracks where the definition came from,
+        enabling multi-system coexistence.
+        """
+        rows = [
+            {
+                "tenant_id": self._tenant_id,
+                "dimension_id": dim_id,
+                "name": info.get("name", ""),
+                "source_system": self._source_system,
+            }
+            for dim_id, info in dimensions.items()
+        ]
+
+        if rows:
+            self._batch_upsert("dimension_types", rows)
         return len(rows)
 
     def _load_dimensions(
@@ -175,8 +251,10 @@ class SupabaseLoader:
         """
         rows: list[dict] = []
 
-        # Period balances from #PSALDO
+        # Period balances from #PSALDO (only current year, year_offset=0)
         for pb in period_balances:
+            if pb.get("year_offset", 0) != 0:
+                continue
             dims = pb.get("dimensions", {})
             rows.append({
                 "tenant_id": self._tenant_id,
@@ -189,8 +267,10 @@ class SupabaseLoader:
                 "balance_type": "period",
             })
 
-        # Opening balances from #IB
+        # Opening balances from #IB (only current year, year_offset=0)
         for ib in opening_balances:
+            if ib.get("year_offset", 0) != 0:
+                continue
             rows.append({
                 "tenant_id": self._tenant_id,
                 "year_id": year_id,
@@ -202,8 +282,10 @@ class SupabaseLoader:
                 "balance_type": "opening",
             })
 
-        # Closing balances from #UB
+        # Closing balances from #UB (only current year, year_offset=0)
         for ub in closing_balances:
+            if ub.get("year_offset", 0) != 0:
+                continue
             rows.append({
                 "tenant_id": self._tenant_id,
                 "year_id": year_id,
@@ -215,8 +297,10 @@ class SupabaseLoader:
                 "balance_type": "closing",
             })
 
-        # Result balances from #RES
+        # Result balances from #RES (only current year, year_offset=0)
         for res in result_balances:
+            if res.get("year_offset", 0) != 0:
+                continue
             rows.append({
                 "tenant_id": self._tenant_id,
                 "year_id": year_id,

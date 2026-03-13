@@ -114,7 +114,8 @@ async def main(args: argparse.Namespace) -> None:
         loader = SupabaseLoader(
             url=_require_env("SUPABASE_URL"),
             key=_require_env("SUPABASE_SERVICE_KEY"),
-            tenant_id=_require_env("TENANT_UUID"),
+            tenant_id=_require_env("TENANT_ID"),
+            source_system=os.environ.get("SOURCE_SYSTEM", "fortnox"),
         )
 
         loader.update_sync_state(status="running")

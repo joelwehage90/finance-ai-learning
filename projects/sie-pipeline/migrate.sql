@@ -7,19 +7,15 @@
 --   - Composite primary keys matching SIE data identifiers
 --   - UPSERT-friendly PKs for idempotent syncing
 
--- Enable UUID generation
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
 -- ============================================================
 -- TENANTS — company/customer master data
 -- ============================================================
 CREATE TABLE IF NOT EXISTS tenants (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              TEXT PRIMARY KEY,       -- e.g. "1803399_fortnox", "visma_12345"
     name            TEXT NOT NULL,
     org_number      TEXT,
-    fortnox_client_id     TEXT,
-    fortnox_client_secret TEXT,
-    fortnox_tenant_id     TEXT,
+    source_system   TEXT,                   -- "fortnox", "visma", "bokio", etc.
+    source_tenant_id TEXT,                  -- ID in the source system
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 
@@ -27,7 +23,7 @@ CREATE TABLE IF NOT EXISTS tenants (
 -- ACCOUNTS — chart of accounts (BAS-kontoplan)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS accounts (
-    tenant_id       UUID NOT NULL REFERENCES tenants(id),
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id),
     account_number  INT NOT NULL,
     name            TEXT NOT NULL,
     account_type    CHAR(1),          -- T=Tillgang, S=Skuld, K=Kostnad, I=Intakt
@@ -40,7 +36,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 -- FINANCIAL_YEARS — fiscal year definitions
 -- ============================================================
 CREATE TABLE IF NOT EXISTS financial_years (
-    tenant_id       UUID NOT NULL REFERENCES tenants(id),
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id),
     year_id         INT NOT NULL,      -- e.g. 2026
     start_date      DATE NOT NULL,
     end_date        DATE NOT NULL,
@@ -48,11 +44,27 @@ CREATE TABLE IF NOT EXISTS financial_years (
 );
 
 -- ============================================================
--- DIMENSIONS — cost centers, projects (from SIE #DIM / #OBJEKT)
+-- DIMENSION_TYPES — what each dimension_id means (from SIE #DIM)
+-- ============================================================
+-- Defines dimension categories. SIE standard IDs:
+--   1=Kostnadsställe, 2=Resultatenhet, 6=Projekt, 7=Anställd,
+--   8=Kund, 9=Leverantör, 10=Faktura.
+-- source_system tracks where the definition originated, since
+-- different systems may use different dimension schemas.
+CREATE TABLE IF NOT EXISTS dimension_types (
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id),
+    dimension_id    INT NOT NULL,
+    name            TEXT NOT NULL,       -- "Kostnadsställe", "Projekt", etc.
+    source_system   TEXT,                -- "fortnox", "visma", "manual", etc.
+    PRIMARY KEY (tenant_id, dimension_id)
+);
+
+-- ============================================================
+-- DIMENSIONS — dimension objects/values (from SIE #OBJEKT)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS dimensions (
-    tenant_id       UUID NOT NULL REFERENCES tenants(id),
-    dimension_id    INT NOT NULL,      -- 1=cost center, 6=project, etc.
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id),
+    dimension_id    INT NOT NULL,      -- FK-like ref to dimension_types
     object_id       TEXT NOT NULL,     -- e.g. "SALJ", "PROD", "PROJ1"
     name            TEXT NOT NULL,
     PRIMARY KEY (tenant_id, dimension_id, object_id)
@@ -62,7 +74,7 @@ CREATE TABLE IF NOT EXISTS dimensions (
 -- VOUCHERS — verification headers (from SIE #VER)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS vouchers (
-    tenant_id       UUID NOT NULL REFERENCES tenants(id),
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id),
     series          TEXT NOT NULL,      -- A, B, C, etc.
     number          INT NOT NULL,
     year_id         INT NOT NULL,
@@ -77,7 +89,7 @@ CREATE TABLE IF NOT EXISTS vouchers (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS transactions (
     id              BIGSERIAL PRIMARY KEY,
-    tenant_id       UUID NOT NULL,
+    tenant_id       TEXT NOT NULL,
     voucher_series  TEXT NOT NULL,
     voucher_number  INT NOT NULL,
     year_id         INT NOT NULL,
@@ -96,7 +108,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 -- PERIOD_BALANCES — pre-aggregated balances (from SIE #PSALDO, #IB, #UB, #RES)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS period_balances (
-    tenant_id       UUID NOT NULL REFERENCES tenants(id),
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id),
     year_id         INT NOT NULL,       -- fiscal year for delete+insert scoping
     account_number  INT NOT NULL,
     period          TEXT NOT NULL,      -- "2026-01", "2026-IB", "2026-UB", "2026-RES"
@@ -112,7 +124,7 @@ CREATE TABLE IF NOT EXISTS period_balances (
 -- SYNC_STATE — tracks sync status per entity
 -- ============================================================
 CREATE TABLE IF NOT EXISTS sync_state (
-    tenant_id       UUID NOT NULL REFERENCES tenants(id),
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id),
     entity_type     TEXT NOT NULL,      -- 'sie4', 'invoices', etc.
     last_sync       TIMESTAMPTZ,
     last_full_sync  TIMESTAMPTZ,
@@ -126,7 +138,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
 -- BUDGET — period budgets (from SIE #PBUDGET)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS budget (
-    tenant_id       UUID NOT NULL REFERENCES tenants(id),
+    tenant_id       TEXT NOT NULL REFERENCES tenants(id),
     year_id         INT NOT NULL,       -- fiscal year for delete+insert scoping
     account_number  INT NOT NULL,
     period          TEXT NOT NULL,      -- "2026-01"
@@ -139,7 +151,7 @@ CREATE TABLE IF NOT EXISTS budget (
 -- FUNCTIONAL_PNL_MAPPING — maps accounts + cost centers to functions
 -- ============================================================
 CREATE TABLE IF NOT EXISTS functional_pnl_mapping (
-    tenant_id           UUID NOT NULL REFERENCES tenants(id),
+    tenant_id           TEXT NOT NULL REFERENCES tenants(id),
     account_range_from  INT NOT NULL,
     account_range_to    INT NOT NULL,
     cost_center         TEXT DEFAULT '*',
