@@ -2,8 +2,10 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from auth import get_current_provider
+from providers.base import AccountingProvider
 from utils import parse_dimensions
 
 from services.huvudbok_service import compute_general_ledger
@@ -13,7 +15,7 @@ router = APIRouter(tags=["huvudbok"])
 
 @router.get("/huvudbok")
 async def get_huvudbok(
-    financial_year_id: int = Query(..., description="Fortnox financial year ID"),
+    financial_year_id: int = Query(..., description="Financial year ID"),
     from_account: int = Query(..., description="Start account number (e.g. 1000)"),
     to_account: int = Query(..., description="End account number (e.g. 1999)"),
     from_period: str = Query(..., description="Start period (YYYY-MM)"),
@@ -24,19 +26,13 @@ async def get_huvudbok(
         None,
         description="Comma-separated dimension IDs to include as columns (e.g. 1,6)",
     ),
+    provider: AccountingProvider = Depends(get_current_provider),
 ):
-    """Compute a general ledger (Huvudbok) from SIE4 data.
-
-    Returns all voucher transactions for accounts in the specified range
-    and period, with running balance per account. Optionally includes
-    dimension columns (Kostnadsställe, Projekt).
-    """
-    from main import sie_client
-
+    """Compute a general ledger (Huvudbok) from SIE4 data."""
     dim_list = parse_dimensions(include_dimensions)
 
     return await compute_general_ledger(
-        client=sie_client,
+        provider=provider,
         financial_year_id=financial_year_id,
         from_account=from_account,
         to_account=to_account,

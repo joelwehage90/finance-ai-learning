@@ -1,6 +1,8 @@
 import React from "react";
 import { makeStyles, Title3, tokens } from "@fluentui/react-components";
+import { AuthProvider, useAuth } from "../../auth/AuthContext";
 import ExportPanel from "./ExportPanel";
+import LoginScreen from "./LoginScreen";
 
 const useStyles = makeStyles({
   root: {
@@ -20,13 +22,18 @@ const useStyles = makeStyles({
   },
 });
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
   const styles = useStyles();
+  const { isAuthenticated, companyName } = useAuth();
+
+  if (!isAuthenticated) {
+    return <LoginScreen />;
+  }
 
   return (
     <div className={styles.root}>
       <div className={styles.header}>
-        <Title3>Fortnox → Excel</Title3>
+        <Title3>{companyName || "Bokföring"} → Excel</Title3>
       </div>
 
       <div className={styles.content}>
@@ -35,5 +42,11 @@ const App: React.FC = () => {
     </div>
   );
 };
+
+const App: React.FC = () => (
+  <AuthProvider>
+    <AppContent />
+  </AuthProvider>
+);
 
 export default App;

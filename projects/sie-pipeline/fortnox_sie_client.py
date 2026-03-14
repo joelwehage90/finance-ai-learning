@@ -28,7 +28,19 @@ class FortnoxSIEClient(FortnoxClient):
     The base FortnoxClient only handles JSON responses. SIE endpoints
     return application/octet-stream in CP437 encoding, so we need a
     separate method that reads raw bytes and decodes them.
+
+    All constructor keyword arguments (access_token, refresh_token,
+    on_token_refresh) are forwarded to FortnoxClient.
     """
+
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        tenant_id: str,
+        **kwargs,
+    ):
+        super().__init__(client_id, client_secret, tenant_id, **kwargs)
 
     async def get_sie(
         self,

@@ -1,20 +1,22 @@
 """Meta endpoints — financial years and other reference data."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from auth import get_current_provider
+from providers.base import AccountingProvider
 
 router = APIRouter(tags=["meta"])
 
 
 @router.get("/financial-years")
-async def get_financial_years():
-    """List available financial years from Fortnox.
+async def get_financial_years(
+    provider: AccountingProvider = Depends(get_current_provider),
+):
+    """List available financial years.
 
     Returns a simplified list with year ID, date range, and label.
     """
-    from main import fortnox_client
-
-    data = await fortnox_client.get("/financialyears")
-    years = data.get("FinancialYears", [])
+    years = await provider.get_financial_years()
 
     return [
         {

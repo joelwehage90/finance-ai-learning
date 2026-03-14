@@ -3,10 +3,14 @@ const webpack = require("webpack");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 
 module.exports = {
-  entry: "./src/taskpane/index.tsx",
+  entry: {
+    taskpane: "./src/taskpane/index.tsx",
+    dialog: "./src/auth/dialog.ts",
+    callback: "./src/auth/callback.ts",
+  },
   output: {
     path: path.resolve(__dirname, "dist"),
-    filename: "taskpane.js",
+    filename: "[name].js",
     clean: true,
   },
   resolve: {
@@ -32,6 +36,17 @@ module.exports = {
     new HtmlWebpackPlugin({
       template: "./src/taskpane/taskpane.html",
       filename: "taskpane.html",
+      chunks: ["taskpane"],
+    }),
+    new HtmlWebpackPlugin({
+      template: "./src/auth/dialog.html",
+      filename: "dialog.html",
+      chunks: ["dialog"],
+    }),
+    new HtmlWebpackPlugin({
+      template: "./src/auth/callback.html",
+      filename: "callback.html",
+      chunks: ["callback"],
     }),
   ],
   devServer: {

@@ -11,8 +11,7 @@ with change amounts and percentages.
 from collections import defaultdict
 from typing import Any
 
-from fortnox_sie_client import FortnoxSIEClient
-
+from providers.base import AccountingProvider
 from services.sie_cache import get_parsed_sie
 from utils import DIM_HEADERS, parse_period
 
@@ -52,7 +51,7 @@ BR_GROUPS = [
 
 
 async def compute_income_statement(
-    client: FortnoxSIEClient,
+    provider: AccountingProvider,
     financial_year_id: int,
     from_period: str,
     to_period: str,
@@ -60,7 +59,7 @@ async def compute_income_statement(
     """Compute an income statement (Resultaträkning) from SIE2 data.
 
     Args:
-        client: SIE client for fetching data from Fortnox.
+        provider: Accounting provider for fetching SIE data.
         financial_year_id: Fortnox financial year ID.
         from_period: Start period inclusive, format "YYYY-MM".
         to_period: End period inclusive, format "YYYY-MM".
@@ -68,7 +67,7 @@ async def compute_income_statement(
     Returns:
         Dict with 'headers', 'rows' (including subtotals), 'period', 'total'.
     """
-    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
+    parsed = await get_parsed_sie(provider, sie_type=2, financial_year_id=financial_year_id)
 
     # Convert and validate period format: "YYYY-MM" → "YYYYMM".
     from_p = parse_period(from_period)
@@ -129,7 +128,7 @@ async def compute_income_statement(
 
 
 async def compute_balance_sheet(
-    client: FortnoxSIEClient,
+    provider: AccountingProvider,
     financial_year_id: int,
     period: str,
 ) -> dict[str, Any]:
@@ -139,14 +138,14 @@ async def compute_balance_sheet(
     up to and including the specified period.
 
     Args:
-        client: SIE client for fetching data from Fortnox.
+        provider: Accounting provider for fetching SIE data.
         financial_year_id: Fortnox financial year ID.
         period: Period to show balance for, format "YYYY-MM".
 
     Returns:
         Dict with 'headers', 'rows' (including subtotals), 'period', 'totals'.
     """
-    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
+    parsed = await get_parsed_sie(provider, sie_type=2, financial_year_id=financial_year_id)
 
     to_p = parse_period(period)
 
@@ -281,7 +280,7 @@ def _compute_br_balances(
 
 
 async def compute_income_statement_comparative(
-    client: FortnoxSIEClient,
+    provider: AccountingProvider,
     financial_year_id: int,
     from_period: str,
     to_period: str,
@@ -292,7 +291,7 @@ async def compute_income_statement_comparative(
     Förändring SEK, Förändring %.
 
     Args:
-        client: SIE client for fetching data from Fortnox.
+        provider: Accounting provider for fetching SIE data.
         financial_year_id: Fortnox financial year ID.
         from_period: Start period inclusive, format "YYYY-MM".
         to_period: End period inclusive, format "YYYY-MM".
@@ -300,7 +299,7 @@ async def compute_income_statement_comparative(
     Returns:
         Dict with 'headers', 'rows', 'period', 'total', 'comparison_total'.
     """
-    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
+    parsed = await get_parsed_sie(provider, sie_type=2, financial_year_id=financial_year_id)
 
     from_p = parse_period(from_period)
     to_p = parse_period(to_period)
@@ -368,7 +367,7 @@ async def compute_income_statement_comparative(
 
 
 async def compute_balance_sheet_comparative(
-    client: FortnoxSIEClient,
+    provider: AccountingProvider,
     financial_year_id: int,
     period: str,
 ) -> dict[str, Any]:
@@ -378,14 +377,14 @@ async def compute_balance_sheet_comparative(
     Förändring SEK, Förändring %.
 
     Args:
-        client: SIE client for fetching data from Fortnox.
+        provider: Accounting provider for fetching SIE data.
         financial_year_id: Fortnox financial year ID.
         period: Period to show balance for, format "YYYY-MM".
 
     Returns:
         Dict with 'headers', 'rows', 'period', 'totals', 'comparison_totals'.
     """
-    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
+    parsed = await get_parsed_sie(provider, sie_type=2, financial_year_id=financial_year_id)
 
     to_p = parse_period(period)
 
@@ -551,7 +550,7 @@ def _compute_br_balances_with_dims(
 
 
 async def compute_income_statement_flat(
-    client: FortnoxSIEClient,
+    provider: AccountingProvider,
     financial_year_id: int,
     from_period: str,
     to_period: str,
@@ -564,7 +563,7 @@ async def compute_income_statement_flat(
     group headers, or separator rows.
 
     Args:
-        client: SIE client for fetching data from Fortnox.
+        provider: Accounting provider for fetching SIE data.
         financial_year_id: Fortnox financial year ID.
         from_period: Start period inclusive, format "YYYY-MM".
         to_period: End period inclusive, format "YYYY-MM".
@@ -575,7 +574,7 @@ async def compute_income_statement_flat(
     Returns:
         Dict with 'headers', 'rows', 'count', 'period'.
     """
-    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
+    parsed = await get_parsed_sie(provider, sie_type=2, financial_year_id=financial_year_id)
 
     from_p = parse_period(from_period)
     to_p = parse_period(to_period)
@@ -639,7 +638,7 @@ async def compute_income_statement_flat(
 
 
 async def compute_balance_sheet_flat(
-    client: FortnoxSIEClient,
+    provider: AccountingProvider,
     financial_year_id: int,
     period: str,
     include_dimensions: list[int] | None = None,
@@ -651,7 +650,7 @@ async def compute_balance_sheet_flat(
     group headers, or separator rows.
 
     Args:
-        client: SIE client for fetching data from Fortnox.
+        provider: Accounting provider for fetching SIE data.
         financial_year_id: Fortnox financial year ID.
         period: Period to show balance for, format "YYYY-MM".
         include_dimensions: List of dimension IDs to include as columns.
@@ -660,7 +659,7 @@ async def compute_balance_sheet_flat(
     Returns:
         Dict with 'headers', 'rows', 'count', 'period'.
     """
-    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
+    parsed = await get_parsed_sie(provider, sie_type=2, financial_year_id=financial_year_id)
 
     to_p = parse_period(period)
     dim_ids = include_dimensions or []

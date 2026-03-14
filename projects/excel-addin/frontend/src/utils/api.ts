@@ -3,9 +3,27 @@
  *
  * All endpoints return { headers: string[], rows: any[][], count: number }
  * for invoice data, or similar structures for reports.
+ *
+ * Auth: call setAuthToken(token) after login to include the JWT
+ * in all subsequent requests.
  */
 
 const API_BASE = process.env.API_BASE_URL || "http://localhost:8000/api";
+
+// Module-level auth token, set by AuthContext after login.
+let _authToken: string | null = null;
+
+export function setAuthToken(token: string | null): void {
+  _authToken = token;
+}
+
+/** Thrown when the server returns 401 (session expired/invalid). */
+export class AuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AuthError";
+  }
+}
 
 async function fetchJson<T>(
   path: string,
@@ -18,7 +36,17 @@ async function fetchJson<T>(
     });
   }
 
-  const response = await fetch(url.toString());
+  const headers: Record<string, string> = {};
+  if (_authToken) {
+    headers["Authorization"] = `Bearer ${_authToken}`;
+  }
+
+  const response = await fetch(url.toString(), { headers });
+
+  if (response.status === 401) {
+    throw new AuthError("Session expired");
+  }
+
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`API error ${response.status}: ${text}`);

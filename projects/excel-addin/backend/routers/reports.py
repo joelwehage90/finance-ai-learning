@@ -6,8 +6,10 @@ versions.
 
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from auth import get_current_provider
+from providers.base import AccountingProvider
 from utils import parse_dimensions
 
 from services.sie_report_service import (
@@ -24,20 +26,14 @@ router = APIRouter(tags=["reports"])
 
 @router.get("/rr")
 async def get_resultatrakning(
-    financial_year_id: int = Query(..., description="Fortnox financial year ID"),
+    financial_year_id: int = Query(..., description="Financial year ID"),
     from_period: str = Query(..., description="Start period (YYYY-MM)"),
     to_period: str = Query(..., description="End period (YYYY-MM)"),
+    provider: AccountingProvider = Depends(get_current_provider),
 ):
-    """Compute an income statement (Resultaträkning) from SIE2 data.
-
-    Fetches SIE2 from Fortnox, sums period balances for accounts
-    3000-8999 within the specified period range, and groups by
-    account class.
-    """
-    from main import sie_client
-
+    """Compute an income statement (Resultaträkning) from SIE2 data."""
     return await compute_income_statement(
-        client=sie_client,
+        provider=provider,
         financial_year_id=financial_year_id,
         from_period=from_period,
         to_period=to_period,
@@ -46,18 +42,13 @@ async def get_resultatrakning(
 
 @router.get("/br")
 async def get_balansrakning(
-    financial_year_id: int = Query(..., description="Fortnox financial year ID"),
+    financial_year_id: int = Query(..., description="Financial year ID"),
     period: str = Query(..., description="Balance date period (YYYY-MM)"),
+    provider: AccountingProvider = Depends(get_current_provider),
 ):
-    """Compute a balance sheet (Balansräkning) from SIE2 data.
-
-    Fetches SIE2 from Fortnox, computes IB + accumulated period
-    movements up to the specified period for accounts 1000-2999.
-    """
-    from main import sie_client
-
+    """Compute a balance sheet (Balansräkning) from SIE2 data."""
     return await compute_balance_sheet(
-        client=sie_client,
+        provider=provider,
         financial_year_id=financial_year_id,
         period=period,
     )
@@ -65,19 +56,14 @@ async def get_balansrakning(
 
 @router.get("/rr-comparative")
 async def get_resultatrakning_comparative(
-    financial_year_id: int = Query(..., description="Fortnox financial year ID"),
+    financial_year_id: int = Query(..., description="Financial year ID"),
     from_period: str = Query(..., description="Start period (YYYY-MM)"),
     to_period: str = Query(..., description="End period (YYYY-MM)"),
+    provider: AccountingProvider = Depends(get_current_provider),
 ):
-    """Comparative income statement — current year vs prior year.
-
-    Returns columns: Konto, Kontonamn, Aktuellt, Föreg. år,
-    Förändring SEK, Förändring %.
-    """
-    from main import sie_client
-
+    """Comparative income statement — current year vs prior year."""
     return await compute_income_statement_comparative(
-        client=sie_client,
+        provider=provider,
         financial_year_id=financial_year_id,
         from_period=from_period,
         to_period=to_period,
@@ -86,18 +72,13 @@ async def get_resultatrakning_comparative(
 
 @router.get("/br-comparative")
 async def get_balansrakning_comparative(
-    financial_year_id: int = Query(..., description="Fortnox financial year ID"),
+    financial_year_id: int = Query(..., description="Financial year ID"),
     period: str = Query(..., description="Balance date period (YYYY-MM)"),
+    provider: AccountingProvider = Depends(get_current_provider),
 ):
-    """Comparative balance sheet — current year vs prior year.
-
-    Returns columns: Konto, Kontonamn, Aktuellt, Föreg. år,
-    Förändring SEK, Förändring %.
-    """
-    from main import sie_client
-
+    """Comparative balance sheet — current year vs prior year."""
     return await compute_balance_sheet_comparative(
-        client=sie_client,
+        provider=provider,
         financial_year_id=financial_year_id,
         period=period,
     )
@@ -110,25 +91,20 @@ async def get_balansrakning_comparative(
 
 @router.get("/rr-flat")
 async def get_resultatrakning_flat(
-    financial_year_id: int = Query(..., description="Fortnox financial year ID"),
+    financial_year_id: int = Query(..., description="Financial year ID"),
     from_period: str = Query(..., description="Start period (YYYY-MM)"),
     to_period: str = Query(..., description="End period (YYYY-MM)"),
     dimensions: Optional[str] = Query(
         None, description="Comma-separated dimension IDs to include (e.g. 1,6)"
     ),
     include_prior_year: bool = Query(False, description="Include prior year columns"),
+    provider: AccountingProvider = Depends(get_current_provider),
 ):
-    """Flat income statement — one row per account/dimension combo.
-
-    No subtotals, group headers, or separators. Suitable for Excel
-    Tables and pivot tables. Optional dimension and prior-year columns.
-    """
-    from main import sie_client
-
+    """Flat income statement — one row per account/dimension combo."""
     dim_list = parse_dimensions(dimensions)
 
     return await compute_income_statement_flat(
-        client=sie_client,
+        provider=provider,
         financial_year_id=financial_year_id,
         from_period=from_period,
         to_period=to_period,
@@ -139,24 +115,19 @@ async def get_resultatrakning_flat(
 
 @router.get("/br-flat")
 async def get_balansrakning_flat(
-    financial_year_id: int = Query(..., description="Fortnox financial year ID"),
+    financial_year_id: int = Query(..., description="Financial year ID"),
     period: str = Query(..., description="Balance date period (YYYY-MM)"),
     dimensions: Optional[str] = Query(
         None, description="Comma-separated dimension IDs to include (e.g. 1,6)"
     ),
     include_prior_year: bool = Query(False, description="Include prior year columns"),
+    provider: AccountingProvider = Depends(get_current_provider),
 ):
-    """Flat balance sheet — one row per account/dimension combo.
-
-    No subtotals, group headers, or separators. Suitable for Excel
-    Tables and pivot tables. Optional dimension and prior-year columns.
-    """
-    from main import sie_client
-
+    """Flat balance sheet — one row per account/dimension combo."""
     dim_list = parse_dimensions(dimensions)
 
     return await compute_balance_sheet_flat(
-        client=sie_client,
+        provider=provider,
         financial_year_id=financial_year_id,
         period=period,
         include_dimensions=dim_list,

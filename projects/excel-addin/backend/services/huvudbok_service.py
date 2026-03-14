@@ -7,8 +7,7 @@ and produces a general ledger with running balance per account.
 from collections import defaultdict
 from typing import Any
 
-from fortnox_sie_client import FortnoxSIEClient
-
+from providers.base import AccountingProvider
 from services.sie_cache import get_parsed_sie
 from utils import DIM_HEADERS, parse_period
 
@@ -31,7 +30,7 @@ HUVUDBOK_HEADERS = _BASE_HEADERS + _AMOUNT_HEADERS
 
 
 async def compute_general_ledger(
-    client: FortnoxSIEClient,
+    provider: AccountingProvider,
     financial_year_id: int,
     from_account: int,
     to_account: int,
@@ -48,7 +47,7 @@ async def compute_general_ledger(
     an opening balance row.
 
     Args:
-        client: SIE client for fetching data from Fortnox.
+        provider: Accounting provider for fetching SIE data.
         financial_year_id: Fortnox financial year ID.
         from_account: Start of account range (inclusive), e.g. 1000.
         to_account: End of account range (inclusive), e.g. 1999.
@@ -62,7 +61,7 @@ async def compute_general_ledger(
     Returns:
         Dict with 'headers', 'rows', 'count', 'period'.
     """
-    parsed = await get_parsed_sie(client, sie_type=4, financial_year_id=financial_year_id)
+    parsed = await get_parsed_sie(provider, sie_type=4, financial_year_id=financial_year_id)
 
     # Convert and validate period format: "YYYY-MM" → "YYYYMM".
     from_p = parse_period(from_period)

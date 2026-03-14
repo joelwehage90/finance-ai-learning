@@ -17,7 +17,7 @@ Status is derived from boolean/numeric fields on each invoice:
 from datetime import date
 from typing import Any
 
-from fortnox_client import FortnoxClient
+from providers.base import AccountingProvider
 
 
 # ----------------------------------------------------------------
@@ -82,7 +82,7 @@ def _matches_filter(
 
 
 async def _fetch_invoices(
-    client: FortnoxClient,
+    provider: AccountingProvider,
     endpoint: str,
     columns: list[tuple[str, str]],
     cancelled_key: str,
@@ -94,7 +94,7 @@ async def _fetch_invoices(
     """Fetch and filter invoices from a Fortnox endpoint.
 
     Args:
-        client: Fortnox API client.
+        provider: Accounting provider for fetching invoices.
         endpoint: API path (e.g. "/supplierinvoices" or "/invoices").
         columns: Ordered list of (api_key, swedish_label) tuples.
         cancelled_key: Field name for the cancelled flag.
@@ -112,7 +112,7 @@ async def _fetch_invoices(
     if to_date:
         params["todate"] = to_date
 
-    raw_invoices = await client.get_all_pages(endpoint, params=params)
+    raw_invoices = await provider.get_invoices(endpoint, params=params)
 
     # Enrich with derived status field.
     for inv in raw_invoices:
@@ -170,7 +170,7 @@ LRK_COLUMNS = [
 
 
 async def fetch_supplier_invoices(
-    client: FortnoxClient,
+    provider: AccountingProvider,
     from_date: str | None = None,
     to_date: str | None = None,
     statuses: list[str] | None = None,
@@ -178,7 +178,7 @@ async def fetch_supplier_invoices(
 ) -> dict[str, Any]:
     """Fetch supplier invoices with optional status filtering."""
     return await _fetch_invoices(
-        client, "/supplierinvoices", LRK_COLUMNS, "Cancel",
+        provider, "/supplierinvoices", LRK_COLUMNS, "Cancel",
         from_date, to_date, statuses, selected_columns,
     )
 
@@ -209,7 +209,7 @@ KRK_COLUMNS = [
 
 
 async def fetch_customer_invoices(
-    client: FortnoxClient,
+    provider: AccountingProvider,
     from_date: str | None = None,
     to_date: str | None = None,
     statuses: list[str] | None = None,
@@ -217,6 +217,6 @@ async def fetch_customer_invoices(
 ) -> dict[str, Any]:
     """Fetch customer invoices with optional status filtering."""
     return await _fetch_invoices(
-        client, "/invoices", KRK_COLUMNS, "Cancelled",
+        provider, "/invoices", KRK_COLUMNS, "Cancelled",
         from_date, to_date, statuses, selected_columns,
     )

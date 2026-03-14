@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:type="TaskPaneApp">
+
+  <!-- TODO: Generate a unique UUID before AppSource submission -->
+  <Id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</Id>
+  <Version>0.2.0</Version>
+  <ProviderName>Joel Wehage</ProviderName>
+  <DefaultLocale>sv-SE</DefaultLocale>
+  <DisplayName DefaultValue="Bokföring → Excel" />
+  <Description DefaultValue="Hämta rapporter och fakturor från ditt bokföringssystem direkt till Excel. Stöd för Fortnox med fler på väg." />
+  <IconUrl DefaultValue="https://YOUR_DOMAIN/assets/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://YOUR_DOMAIN/assets/icon-64.png" />
+
+  <SupportUrl DefaultValue="https://github.com/" />
+
+  <Hosts>
+    <Host Name="Workbook" />
+  </Hosts>
+
+  <Requirements>
+    <Sets>
+      <Set Name="DialogApi" MinVersion="1.1" />
+    </Sets>
+  </Requirements>
+
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://YOUR_DOMAIN/taskpane.html" />
+  </DefaultSettings>
+
+  <Permissions>ReadWriteDocument</Permissions>
+
+</OfficeApp>

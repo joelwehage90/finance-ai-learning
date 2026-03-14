@@ -1,8 +1,11 @@
 """Invoice endpoints — LRK (supplier) and KRK (customer) data for Excel."""
 
-from fastapi import APIRouter, Query
 from typing import Optional
 
+from fastapi import APIRouter, Depends, Query
+
+from auth import get_current_provider
+from providers.base import AccountingProvider
 from services.invoice_service import (
     fetch_supplier_invoices,
     fetch_customer_invoices,
@@ -24,18 +27,14 @@ async def get_lrk(
         None,
         description="Comma-separated column labels to include (e.g. Nr,Leverantör,Belopp)",
     ),
+    provider: AccountingProvider = Depends(get_current_provider),
 ):
-    """Fetch supplier invoices (Leverantörsreskontra) for Excel output.
-
-    Supports multi-status filtering and optional column selection.
-    """
-    from main import fortnox_client
-
+    """Fetch supplier invoices (Leverantörsreskontra) for Excel output."""
     status_list = statuses.split(",") if statuses else None
     col_list = columns.split(",") if columns else None
 
     return await fetch_supplier_invoices(
-        client=fortnox_client,
+        provider=provider,
         from_date=from_date,
         to_date=to_date,
         statuses=status_list,
@@ -56,18 +55,14 @@ async def get_krk(
         None,
         description="Comma-separated column labels to include (e.g. Dokumentnr,Kund,Belopp)",
     ),
+    provider: AccountingProvider = Depends(get_current_provider),
 ):
-    """Fetch customer invoices (Kundreskontra) for Excel output.
-
-    Same pattern as LRK but for the /invoices endpoint.
-    """
-    from main import fortnox_client
-
+    """Fetch customer invoices (Kundreskontra) for Excel output."""
     status_list = statuses.split(",") if statuses else None
     col_list = columns.split(",") if columns else None
 
     return await fetch_customer_invoices(
-        client=fortnox_client,
+        provider=provider,
         from_date=from_date,
         to_date=to_date,
         statuses=status_list,
