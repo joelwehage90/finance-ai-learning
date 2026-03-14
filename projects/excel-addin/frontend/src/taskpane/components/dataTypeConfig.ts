@@ -30,7 +30,7 @@ export interface DataTypeConfig {
   /** All possible columns (fixed + optional). */
   columns: ColumnDef[];
   /** Which filter section to render: "report", "invoice", or "huvudbok". */
-  filterType: "report" | "invoice" | "hovedbok";
+  filterType: "report" | "invoice" | "huvudbok";
   /** Column labels that should be formatted as amounts in Excel. */
   amountColumns: string[];
   /** Column labels that should be formatted as percentages in Excel. */
@@ -186,7 +186,7 @@ export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
       { id: "cost_center", label: "Kostnadsställe", isFixed: false },
       { id: "project", label: "Projekt", isFixed: false },
     ],
-    filterType: "hovedbok",
+    filterType: "huvudbok",
     amountColumns: ["Debit", "Kredit", "Saldo"],
     percentColumns: [],
     defaultSheetName: (p) =>

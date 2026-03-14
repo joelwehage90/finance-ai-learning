@@ -4,6 +4,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
+from utils import parse_dimensions
+
 from services.huvudbok_service import compute_general_ledger
 
 router = APIRouter(tags=["huvudbok"])
@@ -31,11 +33,7 @@ async def get_huvudbok(
     """
     from main import sie_client
 
-    dim_list = (
-        [int(d) for d in include_dimensions.split(",")]
-        if include_dimensions
-        else None
-    )
+    dim_list = parse_dimensions(include_dimensions)
 
     return await compute_general_ledger(
         client=sie_client,

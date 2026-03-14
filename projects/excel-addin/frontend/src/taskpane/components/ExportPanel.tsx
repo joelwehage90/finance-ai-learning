@@ -198,9 +198,9 @@ const ExportPanel: React.FC = () => {
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const config: DataTypeConfig = DATA_TYPE_CONFIGS[dataType];
-  const periods = periodsForYear(selectedYear);
-  const optionalColumns = config.columns.filter((c) => !c.isFixed);
-  const fixedColumns = config.columns.filter((c) => c.isFixed);
+  const periods = useMemo(() => periodsForYear(selectedYear), [selectedYear]);
+  const optionalColumns = useMemo(() => config.columns.filter((c) => !c.isFixed), [config]);
+  const fixedColumns = useMemo(() => config.columns.filter((c) => c.isFixed), [config]);
 
   // --- Load financial years on mount (improvement 1) ---
   const loadYears = useCallback(async () => {
@@ -252,7 +252,7 @@ const ExportPanel: React.FC = () => {
     }
   };
 
-  const toggleColumn = (colId: string) => {
+  const toggleColumn = useCallback((colId: string) => {
     setSelectedColumns((prev) => {
       const next = new Set(prev);
       if (next.has(colId)) {
@@ -262,9 +262,9 @@ const ExportPanel: React.FC = () => {
       }
       return next;
     });
-  };
+  }, []);
 
-  const toggleStatus = (status: string) => {
+  const toggleStatus = useCallback((status: string) => {
     setSelectedStatuses((prev) => {
       const next = new Set(prev);
       if (next.has(status)) {
@@ -274,17 +274,17 @@ const ExportPanel: React.FC = () => {
       }
       return next;
     });
-  };
+  }, []);
 
   const applyPreset = (columnIds: string[]) => {
     // Filter by what is actually available (respecting dim-disabled state).
-    const allowed = columnIds.filter((id) => !isDimDisabled(id));
+    const allowed = columnIds.filter((id) => !disabledCols.has(id));
     setSelectedColumns(new Set(allowed));
   };
 
   const selectAllOptional = () => {
     const ids = optionalColumns
-      .filter((c) => !isDimDisabled(c.id))
+      .filter((c) => !disabledCols.has(c.id))
       .map((c) => c.id);
     setSelectedColumns(new Set(ids));
   };
@@ -306,17 +306,13 @@ const ExportPanel: React.FC = () => {
     }
   };
 
-  // --- Dimension disabled check ---
-  const isDimDisabled = (colId: string): boolean => {
-    if (
-      outputFormat === "rapport" &&
-      (dataType === "rr" || dataType === "br") &&
-      (colId === "cost_center" || colId === "project")
-    ) {
-      return true;
+  // --- Dimension disabled check (memoized as a Set) ---
+  const disabledCols = useMemo((): Set<string> => {
+    if (outputFormat === "rapport" && (dataType === "rr" || dataType === "br")) {
+      return new Set(["cost_center", "project"]);
     }
-    return false;
-  };
+    return new Set();
+  }, [outputFormat, dataType]);
 
   // --- Build dimension string from selected columns ---
   const getDimensionString = (): string | undefined => {
@@ -328,7 +324,7 @@ const ExportPanel: React.FC = () => {
 
   // --- Validation (improvement 2) ---
   const validationError = useMemo((): string | null => {
-    if (config.filterType === "report" || config.filterType === "hovedbok") {
+    if (config.filterType === "report" || config.filterType === "huvudbok") {
       // Period range check (only when both periods are used).
       if (dataType !== "br" && fromPeriod && toPeriod && fromPeriod > toPeriod) {
         return "Från-period kan inte vara efter till-period";
@@ -337,7 +333,7 @@ const ExportPanel: React.FC = () => {
         return "Välj ett räkenskapsår";
       }
     }
-    if (config.filterType === "hovedbok") {
+    if (config.filterType === "huvudbok") {
       if (Number(fromAccount) > Number(toAccount)) {
         return "Från-konto kan inte vara större än till-konto";
       }
@@ -362,13 +358,13 @@ const ExportPanel: React.FC = () => {
   }, [config, fromPeriod, toPeriod, fromAccount, toAccount]);
 
   // --- Set result with auto-dismiss for success (improvement 8) ---
-  const showResult = (text: string, intent: "success" | "warning" | "error") => {
+  const showResult = useCallback((text: string, intent: "success" | "warning" | "error") => {
     if (dismissTimer.current) clearTimeout(dismissTimer.current);
     setResult({ text, intent });
     if (intent === "success") {
       dismissTimer.current = setTimeout(() => setResult(null), 8000);
     }
-  };
+  }, []);
 
   // --- Export handler ---
   const handleExport = async () => {
@@ -469,9 +465,10 @@ const ExportPanel: React.FC = () => {
 
         if (outputFormat === "datatabell") {
           headers = data.headers;
+          const textIdx = data.headers.indexOf("Text");
           rows = data.rows.filter((r) => {
             if (r[0] === null) return false;
-            const text = r[5];
+            const text = textIdx >= 0 ? r[textIdx] : null;
             if (text === "Ingående balans" || text === "Utgående balans") return false;
             return true;
           });
@@ -670,7 +667,7 @@ const ExportPanel: React.FC = () => {
       )}
 
       {/* --- Huvudbok filters --- */}
-      {config.filterType === "hovedbok" && (
+      {config.filterType === "huvudbok" && (
         <>
           <div className={styles.section}>
             <Field label="Räkenskapsår" size="small">
@@ -817,7 +814,7 @@ const ExportPanel: React.FC = () => {
           <>
             <div className={styles.checkboxGroup}>
               {optionalColumns.map((col) => {
-                const disabled = isDimDisabled(col.id);
+                const disabled = disabledCols.has(col.id);
                 return (
                   <Checkbox
                     key={col.id}

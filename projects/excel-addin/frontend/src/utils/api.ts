@@ -5,13 +5,16 @@
  * for invoice data, or similar structures for reports.
  */
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = process.env.API_BASE_URL || "http://localhost:8000/api";
 
-async function fetchJson<T>(path: string, params?: Record<string, string>): Promise<T> {
+async function fetchJson<T>(
+  path: string,
+  params?: Record<string, string | undefined>,
+): Promise<T> {
   const url = new URL(`${API_BASE}${path}`);
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
-      if (v) url.searchParams.set(k, v);
+      if (v !== undefined && v !== null) url.searchParams.set(k, v);
     });
   }
 
@@ -66,7 +69,7 @@ export async function getLRK(params: {
   statuses?: string;
   columns?: string;
 }): Promise<TableData> {
-  return fetchJson<TableData>("/lrk", params as Record<string, string>);
+  return fetchJson<TableData>("/lrk", params);
 }
 
 export async function getKRK(params: {
@@ -75,7 +78,7 @@ export async function getKRK(params: {
   statuses?: string;
   columns?: string;
 }): Promise<TableData> {
-  return fetchJson<TableData>("/krk", params as Record<string, string>);
+  return fetchJson<TableData>("/krk", params);
 }
 
 // ----------------------------------------------------------------
@@ -123,7 +126,7 @@ export async function getRRFlat(params: {
   dimensions?: string;
   include_prior_year?: string;
 }): Promise<TableData> {
-  return fetchJson<TableData>("/rr-flat", params as Record<string, string>);
+  return fetchJson<TableData>("/rr-flat", params);
 }
 
 export async function getBRFlat(params: {
@@ -132,7 +135,7 @@ export async function getBRFlat(params: {
   dimensions?: string;
   include_prior_year?: string;
 }): Promise<TableData> {
-  return fetchJson<TableData>("/br-flat", params as Record<string, string>);
+  return fetchJson<TableData>("/br-flat", params);
 }
 
 // ----------------------------------------------------------------
@@ -149,5 +152,5 @@ export async function getHuvudbok(params: {
   project?: string;
   include_dimensions?: string;
 }): Promise<TableData> {
-  return fetchJson<TableData>("/huvudbok", params as Record<string, string>);
+  return fetchJson<TableData>("/huvudbok", params);
 }

@@ -8,14 +8,18 @@ Usage:
     uvicorn main:app --reload --port 8000
 """
 
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 # Add sibling projects to import path so we can reuse existing code.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -94,6 +98,18 @@ app.include_router(meta_router, prefix="/api")
 app.include_router(invoices_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
 app.include_router(huvudbok_router, prefix="/api")
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Translate exceptions into structured JSON error responses."""
+    if isinstance(exc, ValueError):
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+    if isinstance(exc, RuntimeError):
+        logger.error("Runtime error on %s: %s", request.url.path, exc)
+        return JSONResponse(status_code=502, content={"detail": str(exc)})
+    logger.exception("Unhandled error on %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.get("/health")

@@ -8,7 +8,9 @@ from collections import defaultdict
 from typing import Any
 
 from fortnox_sie_client import FortnoxSIEClient
-from sie_parser import parse_sie
+
+from services.sie_cache import get_parsed_sie
+from utils import DIM_HEADERS, parse_period
 
 
 # Base headers (always present).
@@ -20,12 +22,6 @@ _BASE_HEADERS = [
     "Ver.nr",
     "Text",
 ]
-
-# Dimension ID to Swedish header name.
-_DIM_HEADERS: dict[int, str] = {
-    1: "Kostnadsställe",
-    6: "Projekt",
-}
 
 # Amount headers (always at the end).
 _AMOUNT_HEADERS = ["Debit", "Kredit", "Saldo"]
@@ -66,19 +62,18 @@ async def compute_general_ledger(
     Returns:
         Dict with 'headers', 'rows', 'count', 'period'.
     """
-    sie_text = await client.get_sie(sie_type=4, financial_year=financial_year_id)
-    parsed = parse_sie(sie_text)
+    parsed = await get_parsed_sie(client, sie_type=4, financial_year_id=financial_year_id)
 
-    # Convert period format: "YYYY-MM" -> "YYYYMM" for comparison.
-    from_p = from_period.replace("-", "")
-    to_p = to_period.replace("-", "")
+    # Convert and validate period format: "YYYY-MM" → "YYYYMM".
+    from_p = parse_period(from_period)
+    to_p = parse_period(to_period)
 
     dim_ids = include_dimensions or []
 
     # Build dynamic headers.
     headers = list(_BASE_HEADERS)
     for d in dim_ids:
-        headers.append(_DIM_HEADERS.get(d, f"Dim {d}"))
+        headers.append(DIM_HEADERS.get(d, f"Dim {d}"))
     headers.extend(_AMOUNT_HEADERS)
 
     # Number of None values to pad dimension columns in IB/UB rows.

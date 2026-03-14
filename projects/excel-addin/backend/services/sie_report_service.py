@@ -9,11 +9,12 @@ with change amounts and percentages.
 """
 
 from collections import defaultdict
-from decimal import Decimal
 from typing import Any
 
 from fortnox_sie_client import FortnoxSIEClient
-from sie_parser import parse_sie
+
+from services.sie_cache import get_parsed_sie
+from utils import DIM_HEADERS, parse_period
 
 
 def _pct_change(current: float, prior: float) -> float | None:
@@ -67,12 +68,11 @@ async def compute_income_statement(
     Returns:
         Dict with 'headers', 'rows' (including subtotals), 'period', 'total'.
     """
-    sie_text = await client.get_sie(sie_type=2, financial_year=financial_year_id)
-    parsed = parse_sie(sie_text)
+    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
 
-    # Convert period format for comparison: "YYYY-MM" → "YYYYMM".
-    from_p = from_period.replace("-", "")
-    to_p = to_period.replace("-", "")
+    # Convert and validate period format: "YYYY-MM" → "YYYYMM".
+    from_p = parse_period(from_period)
+    to_p = parse_period(to_period)
 
     # Sum period_balances per account within the period range.
     account_totals: dict[int, float] = defaultdict(float)
@@ -146,10 +146,9 @@ async def compute_balance_sheet(
     Returns:
         Dict with 'headers', 'rows' (including subtotals), 'period', 'totals'.
     """
-    sie_text = await client.get_sie(sie_type=2, financial_year=financial_year_id)
-    parsed = parse_sie(sie_text)
+    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
 
-    to_p = period.replace("-", "")
+    to_p = parse_period(period)
 
     # Start with opening balances (IB) for balance sheet accounts.
     account_balances: dict[int, float] = defaultdict(float)
@@ -301,11 +300,10 @@ async def compute_income_statement_comparative(
     Returns:
         Dict with 'headers', 'rows', 'period', 'total', 'comparison_total'.
     """
-    sie_text = await client.get_sie(sie_type=2, financial_year=financial_year_id)
-    parsed = parse_sie(sie_text)
+    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
 
-    from_p = from_period.replace("-", "")
-    to_p = to_period.replace("-", "")
+    from_p = parse_period(from_period)
+    to_p = parse_period(to_period)
 
     # Current year (year_offset=0) and prior year (year_offset=-1).
     current = _sum_period_balances(parsed, 0, from_p, to_p, 3000, 8999)
@@ -387,10 +385,9 @@ async def compute_balance_sheet_comparative(
     Returns:
         Dict with 'headers', 'rows', 'period', 'totals', 'comparison_totals'.
     """
-    sie_text = await client.get_sie(sie_type=2, financial_year=financial_year_id)
-    parsed = parse_sie(sie_text)
+    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
 
-    to_p = period.replace("-", "")
+    to_p = parse_period(period)
 
     current = _compute_br_balances(parsed, 0, to_p)
     prior = _compute_br_balances(parsed, -1, to_p)
@@ -472,13 +469,6 @@ async def compute_balance_sheet_comparative(
 # ----------------------------------------------------------------
 # Flat / data-table report functions (for pivot tables etc.)
 # ----------------------------------------------------------------
-
-# Map dimension IDs to Swedish header names.
-_DIM_HEADERS: dict[int, str] = {
-    1: "Kostnadsställe",
-    6: "Projekt",
-}
-
 
 def _sum_period_balances_with_dims(
     parsed: dict,
@@ -585,11 +575,10 @@ async def compute_income_statement_flat(
     Returns:
         Dict with 'headers', 'rows', 'count', 'period'.
     """
-    sie_text = await client.get_sie(sie_type=2, financial_year=financial_year_id)
-    parsed = parse_sie(sie_text)
+    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
 
-    from_p = from_period.replace("-", "")
-    to_p = to_period.replace("-", "")
+    from_p = parse_period(from_period)
+    to_p = parse_period(to_period)
     dim_ids = include_dimensions or []
 
     # Sum current year.
@@ -609,7 +598,7 @@ async def compute_income_statement_flat(
     # Build headers.
     headers: list[str] = ["Konto", "Kontonamn"]
     for d in dim_ids:
-        headers.append(_DIM_HEADERS.get(d, f"Dim {d}"))
+        headers.append(DIM_HEADERS.get(d, f"Dim {d}"))
     headers.append("Belopp")
     if include_prior_year:
         headers.extend(["Föreg. år", "Förändring SEK", "Förändring %"])
@@ -671,10 +660,9 @@ async def compute_balance_sheet_flat(
     Returns:
         Dict with 'headers', 'rows', 'count', 'period'.
     """
-    sie_text = await client.get_sie(sie_type=2, financial_year=financial_year_id)
-    parsed = parse_sie(sie_text)
+    parsed = await get_parsed_sie(client, sie_type=2, financial_year_id=financial_year_id)
 
-    to_p = period.replace("-", "")
+    to_p = parse_period(period)
     dim_ids = include_dimensions or []
 
     current = _compute_br_balances_with_dims(parsed, 0, to_p, dim_ids)
@@ -687,7 +675,7 @@ async def compute_balance_sheet_flat(
     # Build headers.
     headers: list[str] = ["Konto", "Kontonamn"]
     for d in dim_ids:
-        headers.append(_DIM_HEADERS.get(d, f"Dim {d}"))
+        headers.append(DIM_HEADERS.get(d, f"Dim {d}"))
     headers.append("Saldo")
     if include_prior_year:
         headers.extend(["Föreg. år", "Förändring SEK", "Förändring %"])

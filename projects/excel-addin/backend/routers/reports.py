@@ -8,6 +8,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
+from utils import parse_dimensions
+
 from services.sie_report_service import (
     compute_income_statement,
     compute_balance_sheet,
@@ -123,7 +125,7 @@ async def get_resultatrakning_flat(
     """
     from main import sie_client
 
-    dim_list = [int(d) for d in dimensions.split(",")] if dimensions else None
+    dim_list = parse_dimensions(dimensions)
 
     return await compute_income_statement_flat(
         client=sie_client,
@@ -151,7 +153,7 @@ async def get_balansrakning_flat(
     """
     from main import sie_client
 
-    dim_list = [int(d) for d in dimensions.split(",")] if dimensions else None
+    dim_list = parse_dimensions(dimensions)
 
     return await compute_balance_sheet_flat(
         client=sie_client,
