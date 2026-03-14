@@ -1,6 +1,6 @@
 /**
- * Data type configuration — defines columns and settings for each
- * export type in the unified ExportPanel.
+ * Data type configuration — defines columns, presets, and settings
+ * for each export type in the unified ExportPanel.
  */
 
 export type DataType = "rr" | "br" | "lrk" | "krk" | "huvudbok";
@@ -12,6 +12,15 @@ export interface ColumnDef {
   label: string;
   /** If true, always included and checkbox is disabled. */
   isFixed: boolean;
+}
+
+/** Quick-select preset for optional columns. */
+export interface ColumnPreset {
+  id: string;
+  /** Swedish label shown on the preset button. */
+  label: string;
+  /** Which optional column IDs this preset selects (empty = none). */
+  columnIds: string[];
 }
 
 export interface DataTypeConfig {
@@ -28,6 +37,8 @@ export interface DataTypeConfig {
   percentColumns: string[];
   /** Generate a default sheet name from current filter params. */
   defaultSheetName: (params: Record<string, string>) => string;
+  /** Quick-select presets for optional columns. */
+  presets: ColumnPreset[];
 }
 
 export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
@@ -46,6 +57,16 @@ export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
     amountColumns: ["Belopp", "Föreg. år", "Förändring SEK"],
     percentColumns: ["Förändring %"],
     defaultSheetName: (p) => `RR ${p.fromPeriod || ""}–${p.toPeriod || ""}`,
+    presets: [
+      { id: "minimal", label: "Minimal", columnIds: [] },
+      { id: "dimensions", label: "Med dimensioner", columnIds: ["cost_center", "project"] },
+      { id: "comparison", label: "Jämförelse", columnIds: ["prior_year"] },
+      {
+        id: "all",
+        label: "Alla",
+        columnIds: ["cost_center", "project", "prior_year"],
+      },
+    ],
   },
   br: {
     id: "br",
@@ -62,6 +83,16 @@ export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
     amountColumns: ["Saldo", "Föreg. år", "Förändring SEK"],
     percentColumns: ["Förändring %"],
     defaultSheetName: (p) => `BR ${p.toPeriod || ""}`,
+    presets: [
+      { id: "minimal", label: "Minimal", columnIds: [] },
+      { id: "dimensions", label: "Med dimensioner", columnIds: ["cost_center", "project"] },
+      { id: "comparison", label: "Jämförelse", columnIds: ["prior_year"] },
+      {
+        id: "all",
+        label: "Alla",
+        columnIds: ["cost_center", "project", "prior_year"],
+      },
+    ],
   },
   lrk: {
     id: "lrk",
@@ -84,6 +115,22 @@ export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
     amountColumns: ["Belopp", "Saldo"],
     percentColumns: [],
     defaultSheetName: () => "LRK",
+    presets: [
+      { id: "minimal", label: "Minimal", columnIds: [] },
+      {
+        id: "standard",
+        label: "Standard",
+        columnIds: ["forfallodatum", "status", "fakturanr"],
+      },
+      {
+        id: "all",
+        label: "Alla",
+        columnIds: [
+          "leverantorsnr", "fakturanr", "fakturadatum", "forfallodatum",
+          "status", "cost_center", "project", "valuta", "saldo",
+        ],
+      },
+    ],
   },
   krk: {
     id: "krk",
@@ -106,6 +153,22 @@ export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
     amountColumns: ["Belopp", "Saldo"],
     percentColumns: [],
     defaultSheetName: () => "KRK",
+    presets: [
+      { id: "minimal", label: "Minimal", columnIds: [] },
+      {
+        id: "standard",
+        label: "Standard",
+        columnIds: ["forfallodatum", "status", "fakturadatum"],
+      },
+      {
+        id: "all",
+        label: "Alla",
+        columnIds: [
+          "kundnr", "fakturadatum", "forfallodatum", "status",
+          "cost_center", "project", "valuta", "saldo", "skickad",
+        ],
+      },
+    ],
   },
   huvudbok: {
     id: "huvudbok",
@@ -128,6 +191,19 @@ export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
     percentColumns: [],
     defaultSheetName: (p) =>
       `Huvudbok ${p.fromAccount || "1000"}-${p.toAccount || "9999"}`,
+    presets: [
+      { id: "minimal", label: "Minimal", columnIds: [] },
+      {
+        id: "standard",
+        label: "Standard",
+        columnIds: ["ver_serie", "ver_nr"],
+      },
+      {
+        id: "all",
+        label: "Alla",
+        columnIds: ["ver_serie", "ver_nr", "cost_center", "project"],
+      },
+    ],
   },
 };
 

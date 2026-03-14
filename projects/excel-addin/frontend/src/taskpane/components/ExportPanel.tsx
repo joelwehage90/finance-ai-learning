@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Checkbox,
   Field,
   Input,
+  MessageBar,
+  MessageBarBody,
   Select,
   Spinner,
   Text,
@@ -34,6 +36,63 @@ import {
   type DataTypeConfig,
 } from "./dataTypeConfig";
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Today as YYYY-MM-DD. */
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** First day of current month as YYYY-MM-DD. */
+function firstOfMonthStr(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}-01`;
+}
+
+/** Current period as YYYY-MM. */
+function currentPeriod(): string {
+  return todayStr().slice(0, 7);
+}
+
+/** Generate period options for a financial year. */
+function periodsForYear(fy: FinancialYear | null): string[] {
+  if (!fy) return [];
+  const from = new Date(fy.from_date);
+  const to = new Date(fy.to_date);
+  const periods: string[] = [];
+  const cur = new Date(from.getFullYear(), from.getMonth(), 1);
+  while (cur <= to) {
+    const y = cur.getFullYear();
+    const m = String(cur.getMonth() + 1).padStart(2, "0");
+    periods.push(`${y}-${m}`);
+    cur.setMonth(cur.getMonth() + 1);
+  }
+  return periods;
+}
+
+/** Compute a smart default "to period" for a financial year. */
+function smartToPeriod(fy: FinancialYear): string {
+  const fyYear = fy.from_date.substring(0, 4);
+  const now = new Date();
+  const nowYear = String(now.getFullYear());
+  if (fyYear === nowYear) {
+    // Current year: use current month.
+    return currentPeriod();
+  }
+  // Prior year: use last month of the financial year.
+  const to = new Date(fy.to_date);
+  const m = String(to.getMonth() + 1).padStart(2, "0");
+  return `${to.getFullYear()}-${m}`;
+}
+
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+
 const useStyles = makeStyles({
   section: {
     marginBottom: "12px",
@@ -48,45 +107,77 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "2px",
     marginTop: "4px",
-    marginBottom: "8px",
-  },
-  fixedCol: {
-    opacity: 0.6,
-  },
-  status: {
-    marginTop: "12px",
-    padding: "8px",
-    borderRadius: "4px",
-    backgroundColor: tokens.colorNeutralBackground3,
+    marginBottom: "4px",
   },
   divider: {
     borderTop: `1px solid ${tokens.colorNeutralStroke1}`,
     marginTop: "12px",
     marginBottom: "12px",
   },
+  fixedColsList: {
+    fontSize: "12px",
+    color: tokens.colorNeutralForeground3,
+    marginBottom: "8px",
+  },
+  presetRow: {
+    display: "flex",
+    gap: "4px",
+    flexWrap: "wrap" as const,
+    marginBottom: "8px",
+  },
+  columnCounter: {
+    fontSize: "11px",
+    color: tokens.colorNeutralForeground3,
+    marginTop: "2px",
+  },
+  stickyFooter: {
+    position: "sticky" as const,
+    bottom: 0,
+    backgroundColor: tokens.colorNeutralBackground1,
+    paddingTop: "8px",
+    paddingBottom: "8px",
+    borderTop: `1px solid ${tokens.colorNeutralStroke1}`,
+    marginTop: "8px",
+  },
+  sheetPreview: {
+    fontSize: "12px",
+    color: tokens.colorNeutralForeground3,
+    marginBottom: "8px",
+  },
+  centerBox: {
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: "200px",
+    gap: "16px",
+    textAlign: "center" as const,
+  },
+  hint: {
+    fontSize: "11px",
+    color: tokens.colorNeutralForeground3,
+    marginTop: "2px",
+  },
 });
 
-/** Generate period options (YYYY-01 through YYYY-12) for a year. */
-function periodsForYear(fy: FinancialYear | null): string[] {
-  if (!fy) return [];
-  const year = fy.from_date.substring(0, 4);
-  return Array.from({ length: 12 }, (_, i) => {
-    const m = String(i + 1).padStart(2, "0");
-    return `${year}-${m}`;
-  });
-}
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 const ExportPanel: React.FC = () => {
   const styles = useStyles();
+
+  // --- Initial loading state (improvement 1) ---
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   // --- Core state ---
   const [dataType, setDataType] = useState<DataType>("rr");
   const [selectedColumns, setSelectedColumns] = useState<Set<string>>(new Set());
   const [outputFormat, setOutputFormat] = useState<"datatabell" | "rapport">("datatabell");
-  const [destination, setDestination] = useState<"replace" | "new">("replace");
+  const [destination, setDestination] = useState<"replace" | "new">("new"); // Improvement 9: default "new"
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ text: string; intent: "success" | "warning" | "error" } | null>(null);
 
   // --- Report filters (RR/BR/Huvudbok) ---
   const [years, setYears] = useState<FinancialYear[]>([]);
@@ -99,35 +190,57 @@ const ExportPanel: React.FC = () => {
   const [toAccount, setToAccount] = useState("9999");
 
   // --- Invoice filters (LRK/KRK) ---
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [fromDate, setFromDate] = useState(firstOfMonthStr); // Improvement 10
+  const [toDate, setToDate] = useState(todayStr); // Improvement 10
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(new Set());
+
+  // --- Auto-dismiss timer for success messages (improvement 8) ---
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const config: DataTypeConfig = DATA_TYPE_CONFIGS[dataType];
   const periods = periodsForYear(selectedYear);
+  const optionalColumns = config.columns.filter((c) => !c.isFixed);
+  const fixedColumns = config.columns.filter((c) => c.isFixed);
 
-  // Load financial years on mount.
-  useEffect(() => {
-    getFinancialYears()
-      .then((data) => {
-        setYears(data);
-        if (data.length > 0) {
-          setSelectedYear(data[0]);
-          const year = data[0].from_date.substring(0, 4);
-          setFromPeriod(`${year}-01`);
-          setToPeriod(`${year}-03`);
-        }
-      })
-      .catch((err) => setError(err.message));
+  // --- Load financial years on mount (improvement 1) ---
+  const loadYears = useCallback(async () => {
+    setInitialLoading(true);
+    setApiError(null);
+    try {
+      const data = await getFinancialYears();
+      setYears(data);
+      if (data.length > 0) {
+        const fy = data[0];
+        setSelectedYear(fy);
+        const year = fy.from_date.substring(0, 4);
+        setFromPeriod(`${year}-01`);
+        setToPeriod(smartToPeriod(fy));
+      }
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : "Okänt fel");
+    } finally {
+      setInitialLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadYears();
+  }, [loadYears]);
 
   // Reset optional columns when data type changes.
   useEffect(() => {
-    // Start with no optional columns selected.
     setSelectedColumns(new Set());
     setResult(null);
-    setError(null);
   }, [dataType]);
+
+  // Clear dismiss timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    };
+  }, []);
+
+  // --- Handlers ---
 
   const handleYearChange = (yearId: string) => {
     const fy = years.find((y) => y.id === Number(yearId));
@@ -135,7 +248,7 @@ const ExportPanel: React.FC = () => {
       setSelectedYear(fy);
       const year = fy.from_date.substring(0, 4);
       setFromPeriod(`${year}-01`);
-      setToPeriod(`${year}-03`);
+      setToPeriod(smartToPeriod(fy));
     }
   };
 
@@ -163,6 +276,48 @@ const ExportPanel: React.FC = () => {
     });
   };
 
+  const applyPreset = (columnIds: string[]) => {
+    // Filter by what is actually available (respecting dim-disabled state).
+    const allowed = columnIds.filter((id) => !isDimDisabled(id));
+    setSelectedColumns(new Set(allowed));
+  };
+
+  const selectAllOptional = () => {
+    const ids = optionalColumns
+      .filter((c) => !isDimDisabled(c.id))
+      .map((c) => c.id);
+    setSelectedColumns(new Set(ids));
+  };
+
+  const clearAllOptional = () => {
+    setSelectedColumns(new Set());
+  };
+
+  // --- Improvement 3: actively deselect dims when switching to rapport ---
+  const handleFormatChange = (fmt: "datatabell" | "rapport") => {
+    setOutputFormat(fmt);
+    if (fmt === "rapport" && (dataType === "rr" || dataType === "br")) {
+      setSelectedColumns((prev) => {
+        const next = new Set(prev);
+        next.delete("cost_center");
+        next.delete("project");
+        return next;
+      });
+    }
+  };
+
+  // --- Dimension disabled check ---
+  const isDimDisabled = (colId: string): boolean => {
+    if (
+      outputFormat === "rapport" &&
+      (dataType === "rr" || dataType === "br") &&
+      (colId === "cost_center" || colId === "project")
+    ) {
+      return true;
+    }
+    return false;
+  };
+
   // --- Build dimension string from selected columns ---
   const getDimensionString = (): string | undefined => {
     const dims: number[] = [];
@@ -171,14 +326,55 @@ const ExportPanel: React.FC = () => {
     return dims.length > 0 ? dims.join(",") : undefined;
   };
 
-  // --- Fetch and export handler ---
-  const handleExport = async () => {
-    if (!selectedYear && (config.filterType === "report" || config.filterType === "hovedbok")) {
-      return;
+  // --- Validation (improvement 2) ---
+  const validationError = useMemo((): string | null => {
+    if (config.filterType === "report" || config.filterType === "hovedbok") {
+      // Period range check (only when both periods are used).
+      if (dataType !== "br" && fromPeriod && toPeriod && fromPeriod > toPeriod) {
+        return "Från-period kan inte vara efter till-period";
+      }
+      if (!selectedYear) {
+        return "Välj ett räkenskapsår";
+      }
     }
+    if (config.filterType === "hovedbok") {
+      if (Number(fromAccount) > Number(toAccount)) {
+        return "Från-konto kan inte vara större än till-konto";
+      }
+    }
+    if (config.filterType === "invoice") {
+      if (fromDate && toDate && fromDate > toDate) {
+        return "Från-datum kan inte vara efter till-datum";
+      }
+    }
+    return null;
+  }, [config.filterType, dataType, fromPeriod, toPeriod, fromAccount, toAccount, fromDate, toDate, selectedYear]);
+
+  // --- Computed sheet name (improvement 8 + 9) ---
+  const computedSheetName = useMemo((): string => {
+    const filterParams: Record<string, string> = {
+      fromPeriod,
+      toPeriod,
+      fromAccount,
+      toAccount,
+    };
+    return config.defaultSheetName(filterParams);
+  }, [config, fromPeriod, toPeriod, fromAccount, toAccount]);
+
+  // --- Set result with auto-dismiss for success (improvement 8) ---
+  const showResult = (text: string, intent: "success" | "warning" | "error") => {
+    if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    setResult({ text, intent });
+    if (intent === "success") {
+      dismissTimer.current = setTimeout(() => setResult(null), 8000);
+    }
+  };
+
+  // --- Export handler ---
+  const handleExport = async () => {
+    if (validationError) return;
 
     setLoading(true);
-    setError(null);
     setResult(null);
 
     try {
@@ -192,7 +388,6 @@ const ExportPanel: React.FC = () => {
 
       if (dataType === "rr" || dataType === "br") {
         if (outputFormat === "datatabell") {
-          // Flat endpoint — dimension columns + optional prior year.
           let data: TableData;
           if (dataType === "rr") {
             data = await getRRFlat({
@@ -214,7 +409,6 @@ const ExportPanel: React.FC = () => {
           rows = data.rows;
           rowCount = data.count;
         } else {
-          // Rapport format — structured with subtotals.
           let data: ReportData;
           if (dataType === "rr") {
             data = hasPriorYear
@@ -244,14 +438,14 @@ const ExportPanel: React.FC = () => {
           rowCount = data.rows.length;
         }
       } else if (dataType === "lrk" || dataType === "krk") {
-        // Build columns param from selected + fixed columns.
         const allCols = config.columns
           .filter((c) => c.isFixed || selectedColumns.has(c.id))
           .map((c) => c.label);
 
-        const statusStr = selectedStatuses.size > 0
-          ? Array.from(selectedStatuses).join(",")
-          : undefined;
+        const statusStr =
+          selectedStatuses.size > 0
+            ? Array.from(selectedStatuses).join(",")
+            : undefined;
 
         const fetchFn = dataType === "lrk" ? getLRK : getKRK;
         const data = await fetchFn({
@@ -274,10 +468,9 @@ const ExportPanel: React.FC = () => {
         });
 
         if (outputFormat === "datatabell") {
-          // Strip IB/UB/separator rows for flat data mode.
           headers = data.headers;
           rows = data.rows.filter((r) => {
-            if (r[0] === null) return false; // separator
+            if (r[0] === null) return false;
             const text = r[5];
             if (text === "Ingående balans" || text === "Utgående balans") return false;
             return true;
@@ -290,16 +483,12 @@ const ExportPanel: React.FC = () => {
         }
       }
 
-      // Build sheet name.
-      const filterParams: Record<string, string> = {
-        fromPeriod,
-        toPeriod,
-        fromAccount,
-        toAccount,
-      };
-      const sheetName = config.defaultSheetName(filterParams);
+      // Handle zero rows as warning.
+      if (rowCount === 0) {
+        showResult("Inga rader hittades för vald period och filter", "warning");
+        return;
+      }
 
-      // Determine which amount/percent columns actually exist in headers.
       const amountCols = config.amountColumns.filter((c) => headers.includes(c));
       const pctCols = config.percentColumns.filter((c) => headers.includes(c));
 
@@ -310,31 +499,54 @@ const ExportPanel: React.FC = () => {
       };
 
       if (isExcelAvailable()) {
-        const actualName = await writeToSheet(sheetName, headers, rows, writeOpts);
-        setResult(`${rowCount} rader skrivna till "${actualName}"`);
+        const actualName = await writeToSheet(computedSheetName, headers, rows, writeOpts);
+        showResult(`${rowCount} rader skrivna till "${actualName}"`, "success");
       } else {
-        setResult(`${rowCount} rader hämtade (Excel ej tillgängligt)`);
+        showResult(`${rowCount} rader hämtade (Excel ej tillgängligt)`, "success");
         console.table(rows.slice(0, 30));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Okänt fel");
+      const msg = err instanceof Error ? err.message : "Okänt fel";
+      // Translate common API errors to Swedish.
+      if (msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+        showResult("Kunde inte nå servern — kontrollera anslutningen", "error");
+      } else if (msg.includes("API error")) {
+        showResult(`Serverfel: ${msg.replace("API error ", "")}`, "error");
+      } else {
+        showResult(`Fel: ${msg}`, "error");
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // --- Determine if dimensions are available in current mode ---
-  const isDimDisabled = (colId: string): boolean => {
-    // Dimensions not supported in rapport mode for RR/BR.
-    if (
-      outputFormat === "rapport" &&
-      (dataType === "rr" || dataType === "br") &&
-      (colId === "cost_center" || colId === "project")
-    ) {
-      return true;
-    }
-    return false;
-  };
+  // --- Improvement 1: Loading state on initial mount ---
+  if (initialLoading) {
+    return (
+      <div className={styles.centerBox}>
+        <Spinner size="medium" label="Laddar räkenskapsår..." />
+      </div>
+    );
+  }
+
+  if (apiError) {
+    return (
+      <div className={styles.centerBox}>
+        <Text size={300} weight="semibold">
+          Kunde inte ansluta
+        </Text>
+        <Text size={200}>{apiError}</Text>
+        <Button appearance="primary" onClick={loadYears}>
+          Försök igen
+        </Button>
+      </div>
+    );
+  }
+
+  // --- Count selected optional columns ---
+  const selectedOptCount = optionalColumns.filter(
+    (c) => selectedColumns.has(c.id),
+  ).length;
 
   return (
     <div>
@@ -386,7 +598,9 @@ const ExportPanel: React.FC = () => {
                   onChange={(_, d) => setFromPeriod(d.value)}
                 >
                   {periods.map((p) => (
-                    <option key={p} value={p}>{p}</option>
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
                   ))}
                 </Select>
               </Field>
@@ -398,7 +612,9 @@ const ExportPanel: React.FC = () => {
                     onChange={(_, d) => setToPeriod(d.value)}
                   >
                     {periods.map((p) => (
-                      <option key={p} value={p}>{p}</option>
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
                     ))}
                   </Select>
                 </Field>
@@ -430,9 +646,14 @@ const ExportPanel: React.FC = () => {
                 />
               </Field>
             </div>
+            <div className={styles.hint}>
+              Lämna tomt för alla fakturor
+            </div>
           </div>
           <div className={styles.section}>
-            <Text size={200} weight="medium">Status:</Text>
+            <Text size={200} weight="medium">
+              Status:
+            </Text>
             <div className={styles.checkboxGroup}>
               {STATUS_OPTIONS.map((opt) => (
                 <Checkbox
@@ -495,7 +716,9 @@ const ExportPanel: React.FC = () => {
                   onChange={(_, d) => setFromPeriod(d.value)}
                 >
                   {periods.map((p) => (
-                    <option key={p} value={p}>{p}</option>
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
                   ))}
                 </Select>
               </Field>
@@ -506,7 +729,9 @@ const ExportPanel: React.FC = () => {
                   onChange={(_, d) => setToPeriod(d.value)}
                 >
                   {periods.map((p) => (
-                    <option key={p} value={p}>{p}</option>
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
                   ))}
                 </Select>
               </Field>
@@ -517,52 +742,19 @@ const ExportPanel: React.FC = () => {
 
       <div className={styles.divider} />
 
-      {/* --- Column checkboxes --- */}
-      <div className={styles.section}>
-        <Text size={200} weight="medium">Kolumner:</Text>
-        <div className={styles.checkboxGroup}>
-          {config.columns.map((col) => {
-            const disabled = col.isFixed || isDimDisabled(col.id);
-            return (
-              <Checkbox
-                key={col.id}
-                label={col.isFixed ? `${col.label} (fast)` : col.label}
-                size="medium"
-                checked={col.isFixed || selectedColumns.has(col.id)}
-                disabled={disabled}
-                onChange={() => {
-                  if (!col.isFixed && !isDimDisabled(col.id)) {
-                    toggleColumn(col.id);
-                  }
-                }}
-                className={col.isFixed ? styles.fixedCol : undefined}
-              />
-            );
-          })}
-        </div>
-        {outputFormat === "rapport" &&
-          (dataType === "rr" || dataType === "br") && (
-            <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-              Dimensioner kräver datatabellformat.
-            </Text>
-          )}
-      </div>
-
-      <div className={styles.divider} />
-
-      {/* --- Output format --- */}
+      {/* --- Improvement 3: Format + Destination BEFORE columns --- */}
       <div className={styles.section}>
         <div className={styles.row}>
-          <Field label="Format" size="small" style={{ flex: 1 }}>
+          <Field label="Exportformat" size="small" style={{ flex: 1 }}>
             <Select
               size="small"
               value={outputFormat}
               onChange={(_, d) =>
-                setOutputFormat(d.value as "datatabell" | "rapport")
+                handleFormatChange(d.value as "datatabell" | "rapport")
               }
             >
-              <option value="datatabell">Datatabell</option>
-              <option value="rapport">Rapport (delsummor)</option>
+              <option value="datatabell">Platt data</option>
+              <option value="rapport">Rapport med delsummor</option>
             </Select>
           </Field>
           <Field label="Destination" size="small" style={{ flex: 1 }}>
@@ -573,38 +765,153 @@ const ExportPanel: React.FC = () => {
                 setDestination(d.value as "replace" | "new")
               }
             >
-              <option value="replace">Ersätt befintligt</option>
               <option value="new">Ny flik</option>
+              <option value="replace">Ersätt befintlig</option>
             </Select>
           </Field>
         </div>
+        {/* Improvement 9: warning when replace is selected */}
+        {destination === "replace" && (
+          <div className={styles.hint} style={{ color: tokens.colorPaletteYellowForeground2 }}>
+            Befintlig flik med samma namn skrivs över
+          </div>
+        )}
       </div>
 
-      {/* --- Export button --- */}
-      <Button
-        appearance="primary"
-        icon={<ArrowDownloadRegular />}
-        onClick={handleExport}
-        disabled={loading}
-        size="medium"
-      >
-        {loading ? <Spinner size="tiny" /> : "Exportera till Excel"}
-      </Button>
+      <div className={styles.divider} />
 
-      {/* --- Status messages --- */}
-      {result && (
-        <div className={styles.status}>
-          <Text size={200}>{result}</Text>
+      {/* --- Improvement 4: Structured column selection --- */}
+      <div className={styles.section}>
+        <Text size={200} weight="medium" block>
+          Kolumner
+        </Text>
+
+        {/* Fixed columns as non-interactive text */}
+        <div className={styles.fixedColsList}>
+          Inkluderas alltid: {fixedColumns.map((c) => c.label).join(", ")}
         </div>
-      )}
-      {error && (
-        <div
-          className={styles.status}
-          style={{ color: tokens.colorPaletteRedForeground1 }}
+
+        {/* Preset buttons */}
+        {config.presets.length > 0 && (
+          <div className={styles.presetRow}>
+            {config.presets.map((preset) => (
+              <Button
+                key={preset.id}
+                size="small"
+                appearance="subtle"
+                onClick={() => applyPreset(preset.columnIds)}
+                style={{
+                  minWidth: 0,
+                  padding: "2px 8px",
+                  fontSize: "11px",
+                }}
+              >
+                {preset.label}
+              </Button>
+            ))}
+          </div>
+        )}
+
+        {/* Optional columns as checkboxes */}
+        {optionalColumns.length > 0 && (
+          <>
+            <div className={styles.checkboxGroup}>
+              {optionalColumns.map((col) => {
+                const disabled = isDimDisabled(col.id);
+                return (
+                  <Checkbox
+                    key={col.id}
+                    label={col.label}
+                    size="medium"
+                    checked={selectedColumns.has(col.id)}
+                    disabled={disabled}
+                    onChange={() => {
+                      if (!disabled) toggleColumn(col.id);
+                    }}
+                  />
+                );
+              })}
+            </div>
+
+            {/* Select all / Clear + counter */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <Button
+                  size="small"
+                  appearance="transparent"
+                  onClick={selectAllOptional}
+                  style={{ minWidth: 0, padding: "0 4px", fontSize: "11px" }}
+                >
+                  Välj alla
+                </Button>
+                <Button
+                  size="small"
+                  appearance="transparent"
+                  onClick={clearAllOptional}
+                  style={{ minWidth: 0, padding: "0 4px", fontSize: "11px" }}
+                >
+                  Rensa
+                </Button>
+              </div>
+              <div className={styles.columnCounter}>
+                {selectedOptCount} av {optionalColumns.length} valbara
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Dim disabled note for rapport mode */}
+        {outputFormat === "rapport" &&
+          (dataType === "rr" || dataType === "br") && (
+            <div className={styles.hint}>
+              Dimensioner kräver platt data-format.
+            </div>
+          )}
+      </div>
+
+      {/* --- Sticky export section (improvement 8) --- */}
+      <div className={styles.stickyFooter}>
+        {/* Validation warning (improvement 2) */}
+        {validationError && (
+          <MessageBar intent="warning" style={{ marginBottom: 8 }}>
+            <MessageBarBody>{validationError}</MessageBarBody>
+          </MessageBar>
+        )}
+
+        {/* Sheet name preview (improvement 8 + 9) */}
+        <div className={styles.sheetPreview}>
+          Exporteras till: <strong>{computedSheetName}</strong>
+        </div>
+
+        {/* Export button (improvement 8) */}
+        <Button
+          appearance="primary"
+          icon={loading ? undefined : <ArrowDownloadRegular />}
+          onClick={handleExport}
+          disabled={loading || !!validationError}
+          size="medium"
+          style={{ width: "100%" }}
         >
-          <Text size={200}>Fel: {error}</Text>
-        </div>
-      )}
+          {loading ? (
+            <>
+              <Spinner size="tiny" style={{ marginRight: 6 }} />
+              Hämtar data...
+            </>
+          ) : (
+            "Exportera till Excel"
+          )}
+        </Button>
+
+        {/* Result message (improvement 8) */}
+        {result && (
+          <MessageBar
+            intent={result.intent}
+            style={{ marginTop: 8 }}
+          >
+            <MessageBarBody>{result.text}</MessageBarBody>
+          </MessageBar>
+        )}
+      </div>
     </div>
   );
 };
