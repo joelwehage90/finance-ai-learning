@@ -1,24 +1,30 @@
 """SIE cache — avoids redundant API calls and SIE parsing.
 
 Caches parsed SIE data by (provider_type, tenant_id, sie_type,
-financial_year_id) with a short TTL. Multiple endpoints hitting the
-same year within the TTL window share a single fetch+parse.
+financial_year_id) with a short TTL and bounded size (S11).
+
+Multiple endpoints hitting the same year within the TTL window
+share a single fetch+parse.
 
 The cache key includes provider and tenant to prevent cross-tenant
 data leaks in a multi-tenant deployment.
 """
 
 import logging
-import time
 from typing import Any
+
+from cachetools import TTLCache
 
 from providers.base import AccountingProvider
 from sie_parser import parse_sie
 
 logger = logging.getLogger(__name__)
 
-_cache: dict[tuple[str, str, int, int], tuple[float, dict[str, Any]]] = {}
-_TTL = 60.0  # seconds
+# SECURITY (S11): Bounded cache with max 100 entries and 60s TTL.
+# Prevents unbounded memory growth from many tenant/year combos.
+_cache: TTLCache[tuple[str, str, int, int], dict[str, Any]] = TTLCache(
+    maxsize=100, ttl=60.0
+)
 
 
 async def get_parsed_sie(
@@ -37,14 +43,11 @@ async def get_parsed_sie(
         Parsed SIE dict from sie_parser.parse_sie().
     """
     key = (provider.provider_type, provider.tenant_id, sie_type, financial_year_id)
-    now = time.monotonic()
 
     cached = _cache.get(key)
     if cached is not None:
-        ts, data = cached
-        if now - ts < _TTL:
-            logger.debug("SIE cache hit for key=%s", key)
-            return data
+        logger.debug("SIE cache hit for key=%s", key)
+        return cached
 
     logger.debug("SIE cache miss for key=%s, fetching from provider", key)
     sie_text = await provider.get_sie_export(
@@ -52,7 +55,7 @@ async def get_parsed_sie(
         financial_year_id=financial_year_id,
     )
     data = parse_sie(sie_text)
-    _cache[key] = (now, data)
+    _cache[key] = data
     return data
 
 

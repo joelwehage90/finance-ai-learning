@@ -4,6 +4,9 @@
  *
  * IMPORTANT: Does NOT use localStorage (partitioned in iframes since
  * Chromium 115+). All communication goes through messageParent.
+ *
+ * The state parameter contains "providerType:nonce" (S5) which is
+ * forwarded to the taskpane for CSRF verification.
  */
 
 /* global Office */
@@ -26,7 +29,7 @@ Office.onReady(() => {
       JSON.stringify({
         type: "oauth_callback",
         code,
-        state,
+        state, // Contains "providerType:nonce" for CSRF verification.
         redirect_uri: window.location.origin + window.location.pathname,
       }),
     );

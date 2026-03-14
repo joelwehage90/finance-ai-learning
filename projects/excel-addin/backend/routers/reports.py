@@ -27,8 +27,8 @@ router = APIRouter(tags=["reports"])
 @router.get("/rr")
 async def get_resultatrakning(
     financial_year_id: int = Query(..., description="Financial year ID"),
-    from_period: str = Query(..., description="Start period (YYYY-MM)"),
-    to_period: str = Query(..., description="End period (YYYY-MM)"),
+    from_period: str = Query(..., description="Start period (YYYY-MM)", pattern=r"^\d{4}-\d{2}$"),
+    to_period: str = Query(..., description="End period (YYYY-MM)", pattern=r"^\d{4}-\d{2}$"),
     provider: AccountingProvider = Depends(get_current_provider),
 ):
     """Compute an income statement (Resultaträkning) from SIE2 data."""
@@ -43,7 +43,7 @@ async def get_resultatrakning(
 @router.get("/br")
 async def get_balansrakning(
     financial_year_id: int = Query(..., description="Financial year ID"),
-    period: str = Query(..., description="Balance date period (YYYY-MM)"),
+    period: str = Query(..., description="Balance date period (YYYY-MM)", pattern=r"^\d{4}-\d{2}$"),
     provider: AccountingProvider = Depends(get_current_provider),
 ):
     """Compute a balance sheet (Balansräkning) from SIE2 data."""
@@ -57,8 +57,8 @@ async def get_balansrakning(
 @router.get("/rr-comparative")
 async def get_resultatrakning_comparative(
     financial_year_id: int = Query(..., description="Financial year ID"),
-    from_period: str = Query(..., description="Start period (YYYY-MM)"),
-    to_period: str = Query(..., description="End period (YYYY-MM)"),
+    from_period: str = Query(..., description="Start period (YYYY-MM)", pattern=r"^\d{4}-\d{2}$"),
+    to_period: str = Query(..., description="End period (YYYY-MM)", pattern=r"^\d{4}-\d{2}$"),
     provider: AccountingProvider = Depends(get_current_provider),
 ):
     """Comparative income statement — current year vs prior year."""
@@ -73,7 +73,7 @@ async def get_resultatrakning_comparative(
 @router.get("/br-comparative")
 async def get_balansrakning_comparative(
     financial_year_id: int = Query(..., description="Financial year ID"),
-    period: str = Query(..., description="Balance date period (YYYY-MM)"),
+    period: str = Query(..., description="Balance date period (YYYY-MM)", pattern=r"^\d{4}-\d{2}$"),
     provider: AccountingProvider = Depends(get_current_provider),
 ):
     """Comparative balance sheet — current year vs prior year."""
@@ -92,8 +92,8 @@ async def get_balansrakning_comparative(
 @router.get("/rr-flat")
 async def get_resultatrakning_flat(
     financial_year_id: int = Query(..., description="Financial year ID"),
-    from_period: str = Query(..., description="Start period (YYYY-MM)"),
-    to_period: str = Query(..., description="End period (YYYY-MM)"),
+    from_period: str = Query(..., description="Start period (YYYY-MM)", pattern=r"^\d{4}-\d{2}$"),
+    to_period: str = Query(..., description="End period (YYYY-MM)", pattern=r"^\d{4}-\d{2}$"),
     dimensions: Optional[str] = Query(
         None, description="Comma-separated dimension IDs to include (e.g. 1,6)"
     ),
@@ -116,7 +116,7 @@ async def get_resultatrakning_flat(
 @router.get("/br-flat")
 async def get_balansrakning_flat(
     financial_year_id: int = Query(..., description="Financial year ID"),
-    period: str = Query(..., description="Balance date period (YYYY-MM)"),
+    period: str = Query(..., description="Balance date period (YYYY-MM)", pattern=r"^\d{4}-\d{2}$"),
     dimensions: Optional[str] = Query(
         None, description="Comma-separated dimension IDs to include (e.g. 1,6)"
     ),

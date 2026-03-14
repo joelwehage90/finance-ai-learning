@@ -7,13 +7,18 @@ Three tables:
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db import Base
+
+
+def _utcnow() -> datetime:
+    """Return timezone-aware UTC now (S18: replaces deprecated utcnow)."""
+    return datetime.now(timezone.utc)
 
 
 class Tenant(Base):
@@ -28,7 +33,7 @@ class Tenant(Base):
     external_tenant_id: Mapped[str] = mapped_column(String(255))
     company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow,
+        DateTime(timezone=True), default=_utcnow,
     )
 
     tokens: Mapped[list["OAuthToken"]] = relationship(back_populates="tenant")
@@ -60,8 +65,8 @@ class OAuthToken(Base):
     token_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=_utcnow,
+        onupdate=_utcnow,
     )
 
     tenant: Mapped["Tenant"] = relationship(back_populates="tokens")
@@ -82,9 +87,12 @@ class UserSession(Base):
         String(255), unique=True, index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow,
+        DateTime(timezone=True), default=_utcnow,
     )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # S14: Index on expires_at for efficient session cleanup queries.
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True,
+    )
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
 
     tenant: Mapped["Tenant"] = relationship(back_populates="sessions")

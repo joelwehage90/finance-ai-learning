@@ -18,8 +18,8 @@ async def get_huvudbok(
     financial_year_id: int = Query(..., description="Financial year ID"),
     from_account: int = Query(..., description="Start account number (e.g. 1000)"),
     to_account: int = Query(..., description="End account number (e.g. 1999)"),
-    from_period: str = Query(..., description="Start period (YYYY-MM)"),
-    to_period: str = Query(..., description="End period (YYYY-MM)"),
+    from_period: str = Query(..., description="Start period (YYYY-MM)", pattern=r"^\d{4}-\d{2}$"),
+    to_period: str = Query(..., description="End period (YYYY-MM)", pattern=r"^\d{4}-\d{2}$"),
     cost_center: Optional[str] = Query(None, description="Filter by cost center"),
     project: Optional[str] = Query(None, description="Filter by project"),
     include_dimensions: Optional[str] = Query(

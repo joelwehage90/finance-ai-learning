@@ -16,8 +16,8 @@ router = APIRouter(tags=["invoices"])
 
 @router.get("/lrk")
 async def get_lrk(
-    from_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
-    to_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    from_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    to_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)", pattern=r"^\d{4}-\d{2}-\d{2}$"),
     statuses: Optional[str] = Query(
         None,
         description="Comma-separated status filters: booked,unbooked,cancelled,"
@@ -44,8 +44,8 @@ async def get_lrk(
 
 @router.get("/krk")
 async def get_krk(
-    from_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
-    to_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    from_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    to_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)", pattern=r"^\d{4}-\d{2}-\d{2}$"),
     statuses: Optional[str] = Query(
         None,
         description="Comma-separated status filters: booked,unbooked,cancelled,"

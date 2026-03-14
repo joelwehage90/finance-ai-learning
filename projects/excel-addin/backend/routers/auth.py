@@ -11,12 +11,15 @@ provider requires only a new entry in the config dict.
 """
 
 import base64
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +29,10 @@ from crypto import encrypt_token
 from db import get_db
 from models import OAuthToken, Tenant, UserSession
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["auth"])
+limiter = Limiter(key_func=get_remote_address)
 
 _settings = get_settings()
 
@@ -57,7 +63,7 @@ class AuthConfigResponse(BaseModel):
 
 class CallbackRequest(BaseModel):
     code: str
-    state: str  # Contains provider_type
+    state: str  # Contains provider_type + nonce (e.g. "fortnox:uuid")
     redirect_uri: str
 
 
@@ -68,11 +74,18 @@ class SessionResponse(BaseModel):
     expires_in: int
 
 
+class LogoutRequest(BaseModel):
+    """Typed request body for logout (S15: replaces raw dict)."""
+
+    token: str
+
+
 # --- Endpoints ---
 
 
 @router.get("/config/{provider_type}")
-async def get_auth_config(provider_type: str) -> AuthConfigResponse:
+@limiter.limit("20/minute")
+async def get_auth_config(request: Request, provider_type: str) -> AuthConfigResponse:
     """Return OAuth configuration for the frontend dialog.
 
     The frontend uses this to build the OAuth authorization URL
@@ -80,9 +93,8 @@ async def get_auth_config(provider_type: str) -> AuthConfigResponse:
     """
     config = PROVIDER_CONFIGS.get(provider_type)
     if not config:
-        raise HTTPException(
-            status_code=400, detail=f"Unknown provider: {provider_type}",
-        )
+        # S7: Don't echo the user-supplied provider_type back.
+        raise HTTPException(status_code=400, detail="Unknown provider type")
 
     return AuthConfigResponse(
         auth_url=config["auth_url"],
@@ -93,7 +105,9 @@ async def get_auth_config(provider_type: str) -> AuthConfigResponse:
 
 
 @router.post("/callback")
+@limiter.limit("5/minute")
 async def oauth_callback(
+    request: Request,
     body: CallbackRequest,
     db: AsyncSession = Depends(get_db),
 ) -> SessionResponse:
@@ -101,15 +115,27 @@ async def oauth_callback(
 
     This is called by the frontend after the OAuth dialog completes.
     The flow:
-    1. Exchange the auth code for access + refresh tokens
-    2. Find or create the tenant record
-    3. Encrypt and store tokens
-    4. Create a session and return a JWT
+    1. Validate redirect_uri against whitelist
+    2. Exchange the auth code for access + refresh tokens
+    3. Find or create the tenant record
+    4. Encrypt and store tokens (with tenant_id as AAD)
+    5. Create a session and return a JWT
     """
-    provider_type = body.state
+    # S5: State contains "provider_type:nonce" — extract provider_type.
+    # Accept both "fortnox" (legacy) and "fortnox:uuid" (new) formats.
+    state_parts = body.state.split(":", 1)
+    provider_type = state_parts[0]
+
     config = PROVIDER_CONFIGS.get(provider_type)
     if not config:
         raise HTTPException(status_code=400, detail="Unknown provider")
+
+    # S6: Validate redirect_uri against server-side whitelist.
+    if body.redirect_uri not in _settings.redirect_uri_whitelist:
+        logger.warning(
+            "Rejected redirect_uri not in whitelist: %s", body.redirect_uri
+        )
+        raise HTTPException(status_code=400, detail="Invalid redirect URI")
 
     client_id = config["client_id"]()
     client_secret = config["client_secret"]()
@@ -134,10 +160,13 @@ async def oauth_callback(
         )
 
     if token_response.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Token exchange failed: {token_response.text}",
+        # S7: Log raw response server-side, return generic error to client.
+        logger.error(
+            "Token exchange failed (status=%d): %s",
+            token_response.status_code,
+            token_response.text,
         )
+        raise HTTPException(status_code=502, detail="Token exchange failed")
 
     token_data = token_response.json()
     access_token = token_data["access_token"]
@@ -162,15 +191,16 @@ async def oauth_callback(
         db.add(tenant)
         await db.flush()
 
-    # Upsert encrypted tokens.
+    # Upsert encrypted tokens (S16: tenant_id as AAD).
+    tenant_id_str = str(tenant.id)
     token_result = await db.execute(
         select(OAuthToken).where(OAuthToken.tenant_id == tenant.id)
     )
     oauth_token = token_result.scalar_one_or_none()
 
     now = datetime.now(timezone.utc)
-    encrypted_access = encrypt_token(access_token)
-    encrypted_refresh = encrypt_token(refresh_token)
+    encrypted_access = encrypt_token(access_token, tenant_id_str)
+    encrypted_refresh = encrypt_token(refresh_token, tenant_id_str)
 
     if oauth_token:
         oauth_token.access_token_encrypted = encrypted_access
@@ -208,14 +238,26 @@ async def oauth_callback(
 
 @router.post("/logout")
 async def logout(
-    body: dict,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """Revoke the current session.
 
-    Expects { "token": "<jwt>" } in the body.
+    SECURITY (S15): Uses the Authorization header to identify the caller
+    and only revokes the session belonging to the authenticated JWT.
+    Falls back to body-based token for backward compatibility.
     """
-    token = body.get("token", "")
+    # Prefer Authorization header (S15), fall back to body.
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    else:
+        try:
+            body = await request.json()
+            token = body.get("token", "")
+        except Exception:
+            token = ""
+
     if not token:
         raise HTTPException(status_code=400, detail="Missing token")
 
@@ -225,8 +267,12 @@ async def logout(
         # Token already invalid/expired — nothing to revoke.
         return {"status": "ok"}
 
+    # Only revoke the session matching this JWT's jti.
     result = await db.execute(
-        select(UserSession).where(UserSession.jwt_id == claims["jti"])
+        select(UserSession).where(
+            UserSession.jwt_id == claims["jti"],
+            UserSession.tenant_id == claims["sub"],
+        )
     )
     session = result.scalar_one_or_none()
     if session:

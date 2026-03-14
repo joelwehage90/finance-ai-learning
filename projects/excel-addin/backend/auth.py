@@ -98,9 +98,15 @@ async def get_current_provider(
     if not oauth_token:
         raise HTTPException(status_code=401, detail="No tokens found")
 
-    # Decrypt tokens.
-    access_token = decrypt_token(oauth_token.access_token_encrypted)
-    refresh_token = decrypt_token(oauth_token.refresh_token_encrypted)
+    # Decrypt tokens — S16: use tenant_id as AAD to bind ciphertext.
+    tenant_id_str = str(tenant.id)
+    try:
+        access_token = decrypt_token(oauth_token.access_token_encrypted, tenant_id_str)
+        refresh_token = decrypt_token(oauth_token.refresh_token_encrypted, tenant_id_str)
+    except Exception:
+        # Backward compat: try without AAD for pre-S16 encrypted tokens.
+        access_token = decrypt_token(oauth_token.access_token_encrypted)
+        refresh_token = decrypt_token(oauth_token.refresh_token_encrypted)
 
     # Create provider based on tenant type, with a callback that
     # persists rotated tokens to the database.
@@ -119,6 +125,7 @@ def _create_provider(
     rotated tokens to the database. This is critical for Fortnox which
     rotates refresh tokens on every use.
     """
+    tenant_id_str = str(tenant.id)
 
     async def _persist_tokens(
         new_access: str, new_refresh: str, expires_in: int
@@ -129,8 +136,9 @@ def _create_provider(
         )
         token_row = result.scalar_one_or_none()
         if token_row:
-            token_row.access_token_encrypted = encrypt_token(new_access)
-            token_row.refresh_token_encrypted = encrypt_token(new_refresh)
+            # S16: Encrypt with tenant_id as AAD.
+            token_row.access_token_encrypted = encrypt_token(new_access, tenant_id_str)
+            token_row.refresh_token_encrypted = encrypt_token(new_refresh, tenant_id_str)
             token_row.token_expires_at = datetime.now(timezone.utc) + timedelta(
                 seconds=expires_in
             )

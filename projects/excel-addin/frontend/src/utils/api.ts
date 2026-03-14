@@ -11,6 +11,9 @@
 const API_BASE = process.env.API_BASE_URL || "http://localhost:8000/api";
 
 // Module-level auth token, set by AuthContext after login.
+// SECURITY NOTE (S12): Stored in JS memory (not HttpOnly cookie) because
+// Office add-in taskpanes use sandboxed iframes with partitioned cookies.
+// XSS prevention is critical — any XSS could read this value.
 let _authToken: string | null = null;
 
 export function setAuthToken(token: string | null): void {

@@ -15,9 +15,13 @@ services:
     environment:
       POSTGRES_DB: excel_addin
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      # SECURITY (S4): Use a strong, random password in production.
+      # Override via env file or docker-compose.override.yml.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "5432:5432"
+      # SECURITY (S4): Bind to localhost only — prevents access from
+      # other machines on the network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 

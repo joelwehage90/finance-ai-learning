@@ -9,6 +9,12 @@
  * 4. callback.html sends the code to taskpane via messageParent()
  * 5. Taskpane POSTs the code to backend /api/auth/callback
  * 6. Backend returns a JWT session token
+ *
+ * SECURITY NOTE (S12): The JWT is stored in a module-level JS variable
+ * (not an HttpOnly cookie) because Office add-in taskpanes run in
+ * sandboxed iframes where cookies are partitioned (Chromium 115+).
+ * This is a known trade-off: XSS prevention is critical since any
+ * XSS vulnerability could steal the token.
  */
 
 import React, {
@@ -43,6 +49,9 @@ export function useAuth(): AuthContextType {
 }
 
 const API_BASE = process.env.API_BASE_URL || "http://localhost:8000/api";
+
+/** Max retries for server-side logout (S21). */
+const LOGOUT_MAX_RETRIES = 2;
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -95,6 +104,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
               if (message.type === "oauth_callback") {
                 try {
                   // Exchange code for session token via backend.
+                  // S5: The state contains "providerType:nonce" — the
+                  // backend extracts the provider type from the state.
                   const resp = await fetch(`${API_BASE}/auth/callback`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -137,13 +148,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const logout = useCallback(() => {
-    // Revoke session on backend (fire and forget).
+    // S15: Send JWT in Authorization header for proper caller verification.
+    // S21: Retry on failure so session gets revoked server-side.
     if (state.token) {
-      fetch(`${API_BASE}/auth/logout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: state.token }),
-      }).catch(() => {});
+      const token = state.token;
+      const attemptLogout = (retries: number) => {
+        fetch(`${API_BASE}/auth/logout`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ token }),
+        }).catch(() => {
+          if (retries > 0) {
+            setTimeout(() => attemptLogout(retries - 1), 1000);
+          }
+          // After all retries fail, the session will expire naturally
+          // via JWT expiry (24h). This is an accepted degradation.
+        });
+      };
+      attemptLogout(LOGOUT_MAX_RETRIES);
     }
 
     setState({
