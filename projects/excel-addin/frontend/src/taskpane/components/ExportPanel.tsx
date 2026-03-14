@@ -234,11 +234,14 @@ const ExportPanel: React.FC = () => {
     loadYears();
   }, [loadYears]);
 
-  // Reset optional columns when data type changes.
+  // Reset optional columns (and format for types that don't support it).
   useEffect(() => {
     setSelectedColumns(new Set());
     setResult(null);
-  }, [dataType]);
+    if (!config.supportsOutputFormat) {
+      setOutputFormat("datatabell");
+    }
+  }, [dataType, config.supportsOutputFormat]);
 
   // Clear dismiss timer on unmount.
   useEffect(() => {
@@ -751,21 +754,23 @@ const ExportPanel: React.FC = () => {
 
       <div className={styles.divider} />
 
-      {/* --- Improvement 3: Format + Destination BEFORE columns --- */}
+      {/* --- Format + Destination BEFORE columns --- */}
       <div className={styles.section}>
         <div className={styles.row}>
-          <Field label="Exportformat" size="small" style={{ flex: 1 }}>
-            <Select
-              size="small"
-              value={outputFormat}
-              onChange={(_, d) =>
-                handleFormatChange(d.value as "datatabell" | "rapport")
-              }
-            >
-              <option value="datatabell">Platt data</option>
-              <option value="rapport">Rapport med delsummor</option>
-            </Select>
-          </Field>
+          {config.supportsOutputFormat && (
+            <Field label="Exportformat" size="small" style={{ flex: 1 }}>
+              <Select
+                size="small"
+                value={outputFormat}
+                onChange={(_, d) =>
+                  handleFormatChange(d.value as "datatabell" | "rapport")
+                }
+              >
+                <option value="datatabell">Platt data</option>
+                <option value="rapport">Rapport med delsummor</option>
+              </Select>
+            </Field>
+          )}
           <Field label="Destination" size="small" style={{ flex: 1 }}>
             <Select
               size="small"
@@ -779,7 +784,7 @@ const ExportPanel: React.FC = () => {
             </Select>
           </Field>
         </div>
-        {/* Improvement 9: warning when replace is selected */}
+        {/* Warning when replace is selected */}
         {destination === "replace" && (
           <div className={styles.hint} style={{ color: tokens.colorPaletteYellowForeground2 }}>
             Befintlig flik med samma namn skrivs över

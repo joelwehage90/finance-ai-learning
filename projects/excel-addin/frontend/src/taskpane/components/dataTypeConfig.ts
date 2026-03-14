@@ -39,12 +39,19 @@ export interface DataTypeConfig {
   defaultSheetName: (params: Record<string, string>) => string;
   /** Quick-select presets for optional columns. */
   presets: ColumnPreset[];
+  /**
+   * Whether the output format selector (flat vs report) is meaningful.
+   * When false, the selector is hidden because both formats produce
+   * identical output for this data type.
+   */
+  supportsOutputFormat: boolean;
 }
 
 export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
   rr: {
     id: "rr",
     label: "Resultaträkning",
+    supportsOutputFormat: true,
     columns: [
       { id: "konto", label: "Konto", isFixed: true },
       { id: "kontonamn", label: "Kontonamn", isFixed: true },
@@ -71,6 +78,7 @@ export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
   br: {
     id: "br",
     label: "Balansräkning",
+    supportsOutputFormat: true,
     columns: [
       { id: "konto", label: "Konto", isFixed: true },
       { id: "kontonamn", label: "Kontonamn", isFixed: true },
@@ -97,6 +105,7 @@ export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
   lrk: {
     id: "lrk",
     label: "Leverantörsreskontra",
+    supportsOutputFormat: false,
     columns: [
       { id: "nr", label: "Nr", isFixed: true },
       { id: "leverantor", label: "Leverantör", isFixed: true },
@@ -135,6 +144,7 @@ export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
   krk: {
     id: "krk",
     label: "Kundreskontra",
+    supportsOutputFormat: false,
     columns: [
       { id: "dokumentnr", label: "Dokumentnr", isFixed: true },
       { id: "kund", label: "Kund", isFixed: true },
@@ -173,6 +183,7 @@ export const DATA_TYPE_CONFIGS: Record<DataType, DataTypeConfig> = {
   huvudbok: {
     id: "huvudbok",
     label: "Huvudbok",
+    supportsOutputFormat: true,
     columns: [
       { id: "konto", label: "Konto", isFixed: true },
       { id: "kontonamn", label: "Kontonamn", isFixed: true },
