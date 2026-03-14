@@ -1,7 +1,10 @@
 """Report endpoints — Resultaträkning and Balansräkning from SIE2.
 
-Includes both standard and comparative (vs prior year) versions.
+Includes standard, comparative (vs prior year), and flat (for pivot)
+versions.
 """
+
+from typing import Optional
 
 from fastapi import APIRouter, Query
 
@@ -10,6 +13,8 @@ from services.sie_report_service import (
     compute_balance_sheet,
     compute_income_statement_comparative,
     compute_balance_sheet_comparative,
+    compute_income_statement_flat,
+    compute_balance_sheet_flat,
 )
 
 router = APIRouter(tags=["reports"])
@@ -93,4 +98,65 @@ async def get_balansrakning_comparative(
         client=sie_client,
         financial_year_id=financial_year_id,
         period=period,
+    )
+
+
+# ----------------------------------------------------------------
+# Flat / data-table endpoints (for pivot tables)
+# ----------------------------------------------------------------
+
+
+@router.get("/rr-flat")
+async def get_resultatrakning_flat(
+    financial_year_id: int = Query(..., description="Fortnox financial year ID"),
+    from_period: str = Query(..., description="Start period (YYYY-MM)"),
+    to_period: str = Query(..., description="End period (YYYY-MM)"),
+    dimensions: Optional[str] = Query(
+        None, description="Comma-separated dimension IDs to include (e.g. 1,6)"
+    ),
+    include_prior_year: bool = Query(False, description="Include prior year columns"),
+):
+    """Flat income statement — one row per account/dimension combo.
+
+    No subtotals, group headers, or separators. Suitable for Excel
+    Tables and pivot tables. Optional dimension and prior-year columns.
+    """
+    from main import sie_client
+
+    dim_list = [int(d) for d in dimensions.split(",")] if dimensions else None
+
+    return await compute_income_statement_flat(
+        client=sie_client,
+        financial_year_id=financial_year_id,
+        from_period=from_period,
+        to_period=to_period,
+        include_dimensions=dim_list,
+        include_prior_year=include_prior_year,
+    )
+
+
+@router.get("/br-flat")
+async def get_balansrakning_flat(
+    financial_year_id: int = Query(..., description="Fortnox financial year ID"),
+    period: str = Query(..., description="Balance date period (YYYY-MM)"),
+    dimensions: Optional[str] = Query(
+        None, description="Comma-separated dimension IDs to include (e.g. 1,6)"
+    ),
+    include_prior_year: bool = Query(False, description="Include prior year columns"),
+):
+    """Flat balance sheet — one row per account/dimension combo.
+
+    No subtotals, group headers, or separators. Suitable for Excel
+    Tables and pivot tables. Optional dimension and prior-year columns.
+    """
+    from main import sie_client
+
+    dim_list = [int(d) for d in dimensions.split(",")] if dimensions else None
+
+    return await compute_balance_sheet_flat(
+        client=sie_client,
+        financial_year_id=financial_year_id,
+        period=period,
+        include_dimensions=dim_list,
+        include_prior_year=include_prior_year,
     )

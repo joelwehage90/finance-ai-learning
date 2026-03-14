@@ -17,13 +17,25 @@ async def get_huvudbok(
     from_period: str = Query(..., description="Start period (YYYY-MM)"),
     to_period: str = Query(..., description="End period (YYYY-MM)"),
     cost_center: Optional[str] = Query(None, description="Filter by cost center"),
+    project: Optional[str] = Query(None, description="Filter by project"),
+    include_dimensions: Optional[str] = Query(
+        None,
+        description="Comma-separated dimension IDs to include as columns (e.g. 1,6)",
+    ),
 ):
     """Compute a general ledger (Huvudbok) from SIE4 data.
 
     Returns all voucher transactions for accounts in the specified range
-    and period, with running balance per account.
+    and period, with running balance per account. Optionally includes
+    dimension columns (Kostnadsställe, Projekt).
     """
     from main import sie_client
+
+    dim_list = (
+        [int(d) for d in include_dimensions.split(",")]
+        if include_dimensions
+        else None
+    )
 
     return await compute_general_ledger(
         client=sie_client,
@@ -33,4 +45,6 @@ async def get_huvudbok(
         from_period=from_period,
         to_period=to_period,
         cost_center=cost_center,
+        project=project,
+        include_dimensions=dim_list,
     )

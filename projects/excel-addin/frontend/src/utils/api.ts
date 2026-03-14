@@ -56,10 +56,15 @@ export async function getFinancialYears(): Promise<FinancialYear[]> {
   return fetchJson<FinancialYear[]>("/financial-years");
 }
 
+// ----------------------------------------------------------------
+// Invoice endpoints (LRK / KRK)
+// ----------------------------------------------------------------
+
 export async function getLRK(params: {
   from_date?: string;
   to_date?: string;
   statuses?: string;
+  columns?: string;
 }): Promise<TableData> {
   return fetchJson<TableData>("/lrk", params as Record<string, string>);
 }
@@ -68,9 +73,14 @@ export async function getKRK(params: {
   from_date?: string;
   to_date?: string;
   statuses?: string;
+  columns?: string;
 }): Promise<TableData> {
   return fetchJson<TableData>("/krk", params as Record<string, string>);
 }
+
+// ----------------------------------------------------------------
+// Structured report endpoints (RR / BR) — with subtotals
+// ----------------------------------------------------------------
 
 export async function getRR(params: {
   financial_year_id: string;
@@ -87,25 +97,6 @@ export async function getBR(params: {
   return fetchJson<ReportData>("/br", params);
 }
 
-// ----------------------------------------------------------------
-// Huvudbok
-// ----------------------------------------------------------------
-
-export async function getHuvudbok(params: {
-  financial_year_id: string;
-  from_account: string;
-  to_account: string;
-  from_period: string;
-  to_period: string;
-  cost_center?: string;
-}): Promise<TableData> {
-  return fetchJson<TableData>("/huvudbok", params as Record<string, string>);
-}
-
-// ----------------------------------------------------------------
-// Comparative reports (vs prior year)
-// ----------------------------------------------------------------
-
 export async function getRRComparative(params: {
   financial_year_id: string;
   from_period: string;
@@ -119,4 +110,44 @@ export async function getBRComparative(params: {
   period: string;
 }): Promise<ReportData> {
   return fetchJson<ReportData>("/br-comparative", params);
+}
+
+// ----------------------------------------------------------------
+// Flat report endpoints (RR / BR) — for pivot tables
+// ----------------------------------------------------------------
+
+export async function getRRFlat(params: {
+  financial_year_id: string;
+  from_period: string;
+  to_period: string;
+  dimensions?: string;
+  include_prior_year?: string;
+}): Promise<TableData> {
+  return fetchJson<TableData>("/rr-flat", params as Record<string, string>);
+}
+
+export async function getBRFlat(params: {
+  financial_year_id: string;
+  period: string;
+  dimensions?: string;
+  include_prior_year?: string;
+}): Promise<TableData> {
+  return fetchJson<TableData>("/br-flat", params as Record<string, string>);
+}
+
+// ----------------------------------------------------------------
+// Huvudbok (General Ledger)
+// ----------------------------------------------------------------
+
+export async function getHuvudbok(params: {
+  financial_year_id: string;
+  from_account: string;
+  to_account: string;
+  from_period: string;
+  to_period: string;
+  cost_center?: string;
+  project?: string;
+  include_dimensions?: string;
+}): Promise<TableData> {
+  return fetchJson<TableData>("/huvudbok", params as Record<string, string>);
 }

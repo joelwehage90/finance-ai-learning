@@ -93,6 +93,7 @@ async def fetch_supplier_invoices(
     from_date: str | None = None,
     to_date: str | None = None,
     statuses: list[str] | None = None,
+    selected_columns: list[str] | None = None,
 ) -> dict[str, Any]:
     """Fetch supplier invoices with optional status filtering.
 
@@ -127,10 +128,16 @@ async def fetch_supplier_invoices(
     # Sort by invoice date descending.
     filtered.sort(key=lambda x: x.get("InvoiceDate", ""), reverse=True)
 
+    # Filter columns if requested, otherwise include all.
+    cols = LRK_COLUMNS
+    if selected_columns:
+        col_set = set(selected_columns)
+        cols = [(key, label) for key, label in LRK_COLUMNS if label in col_set]
+
     # Map to output format.
-    headers = [label for _, label in LRK_COLUMNS]
+    headers = [label for _, label in cols]
     rows = [
-        [inv.get(key) for key, _ in LRK_COLUMNS]
+        [inv.get(key) for key, _ in cols]
         for inv in filtered
     ]
 
@@ -210,6 +217,7 @@ async def fetch_customer_invoices(
     from_date: str | None = None,
     to_date: str | None = None,
     statuses: list[str] | None = None,
+    selected_columns: list[str] | None = None,
 ) -> dict[str, Any]:
     """Fetch customer invoices with optional status filtering.
 
@@ -234,9 +242,15 @@ async def fetch_customer_invoices(
 
     filtered.sort(key=lambda x: x.get("InvoiceDate", ""), reverse=True)
 
-    headers = [label for _, label in KRK_COLUMNS]
+    # Filter columns if requested, otherwise include all.
+    cols = KRK_COLUMNS
+    if selected_columns:
+        col_set = set(selected_columns)
+        cols = [(key, label) for key, label in KRK_COLUMNS if label in col_set]
+
+    headers = [label for _, label in cols]
     rows = [
-        [inv.get(key) for key, _ in KRK_COLUMNS]
+        [inv.get(key) for key, _ in cols]
         for inv in filtered
     ]
 

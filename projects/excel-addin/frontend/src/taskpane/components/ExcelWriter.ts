@@ -1,41 +1,89 @@
 /**
  * ExcelWriter — writes data to Excel worksheets as formatted tables.
  *
- * Creates or replaces a named sheet, writes headers + rows, and
- * applies formatting (auto-fit columns, number format for amounts).
+ * Supports two destination modes:
+ *   - "replace": delete existing sheet with same name (default)
+ *   - "new": always create a new sheet, appending suffix if name exists
  */
 
 /* global Excel */
 
+export interface WriteOptions {
+  /** "replace" = overwrite existing sheet. "new" = always create new. */
+  destination?: "replace" | "new";
+  /** Column labels to format as Swedish currency amounts (#,##0.00). */
+  amountColumns?: string[];
+  /** Column labels to format as percentages (0.0). */
+  percentColumns?: string[];
+}
+
+/**
+ * Convert a 0-based column index to an Excel column letter (A, B, ..., Z, AA, AB, ...).
+ */
+function colLetter(index: number): string {
+  let s = "";
+  let n = index + 1;
+  while (n > 0) {
+    n--;
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26);
+  }
+  return s;
+}
+
 /**
  * Write tabular data to a named Excel worksheet.
  *
- * If a sheet with the given name exists, it is deleted first.
- * Data is written as an Excel Table with auto-filter.
+ * Returns the actual sheet name used (may differ from input when
+ * destination is "new" and name already exists).
  */
 export async function writeToSheet(
   sheetName: string,
   headers: string[],
   rows: (string | number | boolean | null)[][],
-  amountColumns?: string[],
-  percentColumns?: string[]
-): Promise<void> {
+  options: WriteOptions = {},
+): Promise<string> {
+  const { destination = "replace", amountColumns, percentColumns } = options;
+
+  let actualSheetName = sheetName;
+
   await Excel.run(async (context) => {
     const sheets = context.workbook.worksheets;
     sheets.load("items/name");
     await context.sync();
 
-    // Delete existing sheet with same name.
-    const existing = sheets.items.find(
-      (s) => s.name.toLowerCase() === sheetName.toLowerCase()
+    const existingNames = new Set(
+      sheets.items.map((s) => s.name.toLowerCase()),
     );
-    if (existing) {
-      existing.delete();
-      await context.sync();
+
+    if (destination === "replace") {
+      // Delete existing sheet with same name.
+      const existing = sheets.items.find(
+        (s) => s.name.toLowerCase() === sheetName.toLowerCase(),
+      );
+      if (existing) {
+        existing.delete();
+        await context.sync();
+      }
+      actualSheetName = sheetName;
+    } else {
+      // "new" mode — find a unique name.
+      if (existingNames.has(sheetName.toLowerCase())) {
+        let suffix = 2;
+        while (existingNames.has(`${sheetName} (${suffix})`.toLowerCase())) {
+          suffix++;
+        }
+        actualSheetName = `${sheetName} (${suffix})`;
+      }
+    }
+
+    // Truncate to Excel's 31-character sheet name limit.
+    if (actualSheetName.length > 31) {
+      actualSheetName = actualSheetName.substring(0, 31);
     }
 
     // Create new sheet.
-    const sheet = sheets.add(sheetName);
+    const sheet = sheets.add(actualSheetName);
     sheet.activate();
 
     if (rows.length === 0) {
@@ -47,7 +95,7 @@ export async function writeToSheet(
 
     // Build data array: headers + rows.
     const allData: (string | number | boolean | null)[][] = [headers, ...rows];
-    const lastCol = String.fromCharCode(64 + headers.length); // A=65
+    const lastCol = colLetter(headers.length - 1);
     const rangeAddress = `A1:${lastCol}${allData.length}`;
     const range = sheet.getRange(rangeAddress);
     range.values = allData;
@@ -55,7 +103,7 @@ export async function writeToSheet(
     // Create table with auto-filter.
     const tableRange = sheet.getRange(rangeAddress);
     const table = sheet.tables.add(tableRange, true /* hasHeaders */);
-    table.name = sheetName.replace(/[^a-zA-Z0-9]/g, "_");
+    table.name = actualSheetName.replace(/[^a-zA-Z0-9]/g, "_");
     table.style = "TableStyleMedium2";
 
     // Format header row.
@@ -67,9 +115,9 @@ export async function writeToSheet(
       for (const colName of amountColumns) {
         const colIndex = headers.indexOf(colName);
         if (colIndex >= 0) {
-          const colLetter = String.fromCharCode(65 + colIndex);
+          const letter = colLetter(colIndex);
           const amountRange = sheet.getRange(
-            `${colLetter}2:${colLetter}${allData.length}`
+            `${letter}2:${letter}${allData.length}`,
           );
           amountRange.numberFormat = [["#,##0.00"]];
         }
@@ -81,9 +129,9 @@ export async function writeToSheet(
       for (const colName of percentColumns) {
         const colIndex = headers.indexOf(colName);
         if (colIndex >= 0) {
-          const colLetter = String.fromCharCode(65 + colIndex);
+          const letter = colLetter(colIndex);
           const pctRange = sheet.getRange(
-            `${colLetter}2:${colLetter}${allData.length}`
+            `${letter}2:${letter}${allData.length}`,
           );
           pctRange.numberFormat = [["0.0"]];
         }
@@ -95,6 +143,8 @@ export async function writeToSheet(
 
     await context.sync();
   });
+
+  return actualSheetName;
 }
 
 /**

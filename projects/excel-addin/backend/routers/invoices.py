@@ -20,21 +20,26 @@ async def get_lrk(
         description="Comma-separated status filters: booked,unbooked,cancelled,"
                     "fullypaid,unpaid,unpaidoverdue,authorizationnotstarted",
     ),
+    columns: Optional[str] = Query(
+        None,
+        description="Comma-separated column labels to include (e.g. Nr,Leverantör,Belopp)",
+    ),
 ):
     """Fetch supplier invoices (Leverantörsreskontra) for Excel output.
 
-    Supports multi-status filtering by making parallel Fortnox API calls
-    and deduplicating the results.
+    Supports multi-status filtering and optional column selection.
     """
     from main import fortnox_client
 
     status_list = statuses.split(",") if statuses else None
+    col_list = columns.split(",") if columns else None
 
     return await fetch_supplier_invoices(
         client=fortnox_client,
         from_date=from_date,
         to_date=to_date,
         statuses=status_list,
+        selected_columns=col_list,
     )
 
 
@@ -47,6 +52,10 @@ async def get_krk(
         description="Comma-separated status filters: booked,unbooked,cancelled,"
                     "fullypaid,unpaid,unpaidoverdue",
     ),
+    columns: Optional[str] = Query(
+        None,
+        description="Comma-separated column labels to include (e.g. Dokumentnr,Kund,Belopp)",
+    ),
 ):
     """Fetch customer invoices (Kundreskontra) for Excel output.
 
@@ -55,10 +64,12 @@ async def get_krk(
     from main import fortnox_client
 
     status_list = statuses.split(",") if statuses else None
+    col_list = columns.split(",") if columns else None
 
     return await fetch_customer_invoices(
         client=fortnox_client,
         from_date=from_date,
         to_date=to_date,
         statuses=status_list,
+        selected_columns=col_list,
     )

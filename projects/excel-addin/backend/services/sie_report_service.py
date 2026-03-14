@@ -467,3 +467,259 @@ async def compute_balance_sheet_comparative(
             "equity_and_liabilities": round(el_pri, 2),
         },
     }
+
+
+# ----------------------------------------------------------------
+# Flat / data-table report functions (for pivot tables etc.)
+# ----------------------------------------------------------------
+
+# Map dimension IDs to Swedish header names.
+_DIM_HEADERS: dict[int, str] = {
+    1: "Kostnadsställe",
+    6: "Projekt",
+}
+
+
+def _sum_period_balances_with_dims(
+    parsed: dict,
+    year_offset: int,
+    from_p: str,
+    to_p: str,
+    acct_from: int,
+    acct_to: int,
+    dim_ids: list[int],
+) -> dict[tuple, float]:
+    """Sum period_balances grouped by (account, dim_1, dim_6, ...).
+
+    Returns dict mapping (account, dim_val_1, dim_val_2, ...) -> amount.
+    """
+    totals: dict[tuple, float] = defaultdict(float)
+    for pb in parsed.get("period_balances", []):
+        if pb.get("year_offset", 0) != year_offset:
+            continue
+        period = pb.get("period", "")
+        account = pb.get("account")
+        if account is None or not (acct_from <= account <= acct_to):
+            continue
+        if not (from_p <= period <= to_p):
+            continue
+        dims = pb.get("dimensions", {})
+        key = (account,) + tuple(dims.get(d, "") for d in dim_ids)
+        totals[key] += float(pb["amount"])
+    return totals
+
+
+def _compute_br_balances_with_dims(
+    parsed: dict,
+    year_offset: int,
+    to_p: str,
+    dim_ids: list[int],
+) -> dict[tuple, float]:
+    """Compute balance sheet balances grouped by (account, dims...).
+
+    IB + accumulated period movements up to period.
+    Uses object_opening_balances for dimension-aware IB when available.
+    """
+    balances: dict[tuple, float] = defaultdict(float)
+
+    # Opening balances — use #OIB (object IB) if dims requested,
+    # fall back to #IB (aggregate) for entries without dimensions.
+    if dim_ids:
+        for oib in parsed.get("object_opening_balances", []):
+            if oib.get("year_offset", 0) != year_offset:
+                continue
+            acct = oib.get("account")
+            if acct is None or not (1000 <= acct <= 2999):
+                continue
+            dims = oib.get("dimensions", {})
+            key = (acct,) + tuple(dims.get(d, "") for d in dim_ids)
+            balances[key] += float(oib["amount"])
+    else:
+        for ib in parsed.get("opening_balances", []):
+            if ib.get("year_offset", 0) != year_offset:
+                continue
+            acct = ib.get("account")
+            if acct is None or not (1000 <= acct <= 2999):
+                continue
+            key = (acct,)
+            balances[key] += float(ib["amount"])
+
+    # Period movements.
+    for pb in parsed.get("period_balances", []):
+        if pb.get("year_offset", 0) != year_offset:
+            continue
+        period = pb.get("period", "")
+        acct = pb.get("account")
+        if acct is None or not (1000 <= acct <= 2999):
+            continue
+        if period <= to_p:
+            dims = pb.get("dimensions", {})
+            key = (acct,) + tuple(dims.get(d, "") for d in dim_ids)
+            balances[key] += float(pb["amount"])
+
+    return balances
+
+
+async def compute_income_statement_flat(
+    client: FortnoxSIEClient,
+    financial_year_id: int,
+    from_period: str,
+    to_period: str,
+    include_dimensions: list[int] | None = None,
+    include_prior_year: bool = False,
+) -> dict[str, Any]:
+    """Compute a flat income statement (RR) suitable for pivot tables.
+
+    Returns one row per (account, dimension_combo) with no subtotals,
+    group headers, or separator rows.
+
+    Args:
+        client: SIE client for fetching data from Fortnox.
+        financial_year_id: Fortnox financial year ID.
+        from_period: Start period inclusive, format "YYYY-MM".
+        to_period: End period inclusive, format "YYYY-MM".
+        include_dimensions: List of dimension IDs to include as columns
+            (e.g. [1, 6] for Kostnadsställe + Projekt).
+        include_prior_year: If True, add prior-year comparison columns.
+
+    Returns:
+        Dict with 'headers', 'rows', 'count', 'period'.
+    """
+    sie_text = await client.get_sie(sie_type=2, financial_year=financial_year_id)
+    parsed = parse_sie(sie_text)
+
+    from_p = from_period.replace("-", "")
+    to_p = to_period.replace("-", "")
+    dim_ids = include_dimensions or []
+
+    # Sum current year.
+    current = _sum_period_balances_with_dims(
+        parsed, 0, from_p, to_p, 3000, 8999, dim_ids,
+    )
+
+    # Sum prior year if requested.
+    prior: dict[tuple, float] = {}
+    if include_prior_year:
+        prior = _sum_period_balances_with_dims(
+            parsed, -1, from_p, to_p, 3000, 8999, dim_ids,
+        )
+
+    accounts = parsed.get("accounts", {})
+
+    # Build headers.
+    headers: list[str] = ["Konto", "Kontonamn"]
+    for d in dim_ids:
+        headers.append(_DIM_HEADERS.get(d, f"Dim {d}"))
+    headers.append("Belopp")
+    if include_prior_year:
+        headers.extend(["Föreg. år", "Förändring SEK", "Förändring %"])
+
+    # Collect all unique keys from current + prior.
+    all_keys = sorted(set(current.keys()) | set(prior.keys()))
+
+    rows: list[list[Any]] = []
+    for key in all_keys:
+        acct = key[0]
+        cur = round(current.get(key, 0.0), 2)
+        pri = round(prior.get(key, 0.0), 2) if include_prior_year else 0.0
+        if cur == 0 and pri == 0:
+            continue
+
+        acct_name = accounts.get(acct, {}).get("name", "")
+        row: list[Any] = [acct, acct_name]
+
+        # Dimension values.
+        for i in range(len(dim_ids)):
+            row.append(key[1 + i] if 1 + i < len(key) else "")
+
+        row.append(cur)
+
+        if include_prior_year:
+            change = round(cur - pri, 2)
+            pct = _pct_change(cur, pri)
+            row.extend([pri, change, pct])
+
+        rows.append(row)
+
+    return {
+        "headers": headers,
+        "rows": rows,
+        "count": len(rows),
+        "period": f"{from_period} – {to_period}",
+    }
+
+
+async def compute_balance_sheet_flat(
+    client: FortnoxSIEClient,
+    financial_year_id: int,
+    period: str,
+    include_dimensions: list[int] | None = None,
+    include_prior_year: bool = False,
+) -> dict[str, Any]:
+    """Compute a flat balance sheet (BR) suitable for pivot tables.
+
+    Returns one row per (account, dimension_combo) with no subtotals,
+    group headers, or separator rows.
+
+    Args:
+        client: SIE client for fetching data from Fortnox.
+        financial_year_id: Fortnox financial year ID.
+        period: Period to show balance for, format "YYYY-MM".
+        include_dimensions: List of dimension IDs to include as columns.
+        include_prior_year: If True, add prior-year comparison columns.
+
+    Returns:
+        Dict with 'headers', 'rows', 'count', 'period'.
+    """
+    sie_text = await client.get_sie(sie_type=2, financial_year=financial_year_id)
+    parsed = parse_sie(sie_text)
+
+    to_p = period.replace("-", "")
+    dim_ids = include_dimensions or []
+
+    current = _compute_br_balances_with_dims(parsed, 0, to_p, dim_ids)
+    prior: dict[tuple, float] = {}
+    if include_prior_year:
+        prior = _compute_br_balances_with_dims(parsed, -1, to_p, dim_ids)
+
+    accounts = parsed.get("accounts", {})
+
+    # Build headers.
+    headers: list[str] = ["Konto", "Kontonamn"]
+    for d in dim_ids:
+        headers.append(_DIM_HEADERS.get(d, f"Dim {d}"))
+    headers.append("Saldo")
+    if include_prior_year:
+        headers.extend(["Föreg. år", "Förändring SEK", "Förändring %"])
+
+    all_keys = sorted(set(current.keys()) | set(prior.keys()))
+
+    rows: list[list[Any]] = []
+    for key in all_keys:
+        acct = key[0]
+        cur = round(current.get(key, 0.0), 2)
+        pri = round(prior.get(key, 0.0), 2) if include_prior_year else 0.0
+        if cur == 0 and pri == 0:
+            continue
+
+        acct_name = accounts.get(acct, {}).get("name", "")
+        row: list[Any] = [acct, acct_name]
+
+        for i in range(len(dim_ids)):
+            row.append(key[1 + i] if 1 + i < len(key) else "")
+
+        row.append(cur)
+
+        if include_prior_year:
+            change = round(cur - pri, 2)
+            pct = _pct_change(cur, pri)
+            row.extend([pri, change, pct])
+
+        rows.append(row)
+
+    return {
+        "headers": headers,
+        "rows": rows,
+        "count": len(rows),
+        "period": period,
+    }

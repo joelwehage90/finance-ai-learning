@@ -11,17 +11,27 @@ from fortnox_sie_client import FortnoxSIEClient
 from sie_parser import parse_sie
 
 
-HUVUDBOK_HEADERS = [
+# Base headers (always present).
+_BASE_HEADERS = [
     "Konto",
     "Kontonamn",
     "Datum",
     "Ver.serie",
     "Ver.nr",
     "Text",
-    "Debit",
-    "Kredit",
-    "Saldo",
 ]
+
+# Dimension ID to Swedish header name.
+_DIM_HEADERS: dict[int, str] = {
+    1: "Kostnadsställe",
+    6: "Projekt",
+}
+
+# Amount headers (always at the end).
+_AMOUNT_HEADERS = ["Debit", "Kredit", "Saldo"]
+
+# Legacy constant for backward compatibility.
+HUVUDBOK_HEADERS = _BASE_HEADERS + _AMOUNT_HEADERS
 
 
 async def compute_general_ledger(
@@ -32,6 +42,8 @@ async def compute_general_ledger(
     from_period: str,
     to_period: str,
     cost_center: str | None = None,
+    project: str | None = None,
+    include_dimensions: list[int] | None = None,
 ) -> dict[str, Any]:
     """Compute a general ledger (Huvudbok) from SIE4 data.
 
@@ -47,6 +59,9 @@ async def compute_general_ledger(
         from_period: Start period (YYYY-MM), inclusive.
         to_period: End period (YYYY-MM), inclusive.
         cost_center: Optional cost center filter (dimension 1).
+        project: Optional project filter (dimension 6).
+        include_dimensions: List of dimension IDs to include as output
+            columns (e.g. [1, 6] for Kostnadsställe + Projekt).
 
     Returns:
         Dict with 'headers', 'rows', 'count', 'period'.
@@ -57,6 +72,17 @@ async def compute_general_ledger(
     # Convert period format: "YYYY-MM" -> "YYYYMM" for comparison.
     from_p = from_period.replace("-", "")
     to_p = to_period.replace("-", "")
+
+    dim_ids = include_dimensions or []
+
+    # Build dynamic headers.
+    headers = list(_BASE_HEADERS)
+    for d in dim_ids:
+        headers.append(_DIM_HEADERS.get(d, f"Dim {d}"))
+    headers.extend(_AMOUNT_HEADERS)
+
+    # Number of None values to pad dimension columns in IB/UB rows.
+    n_dim_cols = len(dim_ids)
 
     # Build opening balances per account (IB, year_offset=0).
     opening: dict[int, float] = defaultdict(float)
@@ -108,11 +134,16 @@ async def compute_general_ledger(
             if acct is None or not (from_account <= acct <= to_account):
                 continue
 
+            dims = trans.get("dimensions", {})
+
             # Cost center filter (dimension 1).
             if cost_center:
-                dims = trans.get("dimensions", {})
-                trans_cc = dims.get(1, "")
-                if trans_cc != cost_center:
+                if dims.get(1, "") != cost_center:
+                    continue
+
+            # Project filter (dimension 6).
+            if project:
+                if dims.get(6, "") != project:
                     continue
 
             amount = float(trans.get("amount", 0))
@@ -123,6 +154,9 @@ async def compute_general_ledger(
             if len(v_date) == 8:
                 formatted_date = f"{v_date[:4]}-{v_date[4:6]}-{v_date[6:8]}"
 
+            # Extract dimension values for output.
+            dim_values = [dims.get(d, "") for d in dim_ids]
+
             account_transactions[acct].append({
                 "date": formatted_date,
                 "series": series,
@@ -130,6 +164,7 @@ async def compute_general_ledger(
                 "text": trans_text,
                 "amount": amount,
                 "sort_key": v_date,  # For sorting by date.
+                "dim_values": dim_values,
             })
 
             # Ensure account is in our name lookup.
@@ -146,8 +181,11 @@ async def compute_general_ledger(
         acct_name = account_names.get(acct, "")
         ib = round(opening.get(acct, 0.0), 2)
 
-        # Opening balance row.
-        rows.append([acct, acct_name, "", "", "", "Ingående balans", None, None, ib])
+        # Opening balance row (pad dimension columns with None).
+        ib_row: list[Any] = [acct, acct_name, "", "", "", "Ingående balans"]
+        ib_row.extend([None] * n_dim_cols)
+        ib_row.extend([None, None, ib])
+        rows.append(ib_row)
 
         # Sort transactions by date, then by voucher number.
         txns = sorted(
@@ -162,26 +200,29 @@ async def compute_general_ledger(
             credit = round(abs(amount), 2) if amount < 0 else None
             running = round(running + amount, 2)
 
-            rows.append([
+            row: list[Any] = [
                 acct,
                 acct_name,
                 t["date"],
                 t["series"],
                 t["number"],
                 t["text"],
-                debit,
-                credit,
-                running,
-            ])
+            ]
+            row.extend(t.get("dim_values", [None] * n_dim_cols))
+            row.extend([debit, credit, running])
+            rows.append(row)
 
         # Closing balance row.
-        rows.append([acct, acct_name, "", "", "", "Utgående balans", None, None, running])
+        ub_row: list[Any] = [acct, acct_name, "", "", "", "Utgående balans"]
+        ub_row.extend([None] * n_dim_cols)
+        ub_row.extend([None, None, running])
+        rows.append(ub_row)
 
         # Blank separator.
-        rows.append([None, None, None, None, None, None, None, None, None])
+        rows.append([None] * len(headers))
 
     return {
-        "headers": HUVUDBOK_HEADERS,
+        "headers": headers,
         "rows": rows,
         "count": len(rows),
         "period": f"{from_period} – {to_period}",
