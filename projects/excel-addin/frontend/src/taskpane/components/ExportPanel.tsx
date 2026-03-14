@@ -14,6 +14,7 @@ import {
 } from "@fluentui/react-components";
 import { ArrowDownloadRegular } from "@fluentui/react-icons";
 import {
+  AuthError,
   getFinancialYears,
   getLRK,
   getKRK,
@@ -28,6 +29,7 @@ import {
   type TableData,
   type ReportData,
 } from "../../utils/api";
+import { useAuth } from "../../auth/AuthContext";
 import { writeToSheet, isExcelAvailable, type WriteOptions } from "./ExcelWriter";
 import {
   DATA_TYPE_CONFIGS,
@@ -166,6 +168,7 @@ const useStyles = makeStyles({
 
 const ExportPanel: React.FC = () => {
   const styles = useStyles();
+  const { logout } = useAuth();
 
   // --- Initial loading state (improvement 1) ---
   const [initialLoading, setInitialLoading] = useState(true);
@@ -217,11 +220,15 @@ const ExportPanel: React.FC = () => {
         setToPeriod(smartToPeriod(fy));
       }
     } catch (err) {
+      if (err instanceof AuthError) {
+        logout();
+        return;
+      }
       setApiError(err instanceof Error ? err.message : "Okänt fel");
     } finally {
       setInitialLoading(false);
     }
-  }, []);
+  }, [logout]);
 
   useEffect(() => {
     loadYears();
@@ -503,6 +510,11 @@ const ExportPanel: React.FC = () => {
         console.table(rows.slice(0, 30));
       }
     } catch (err) {
+      if (err instanceof AuthError) {
+        // Session expired — log out, which returns user to LoginScreen.
+        logout();
+        return;
+      }
       const msg = err instanceof Error ? err.message : "Okänt fel";
       // Translate common API errors to Swedish.
       if (msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
