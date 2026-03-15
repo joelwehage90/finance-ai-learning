@@ -12,12 +12,25 @@ Status is derived from boolean/numeric fields on each invoice:
     - fullypaid:  Balance == 0 and not cancelled
     - unpaid:     Balance != 0 and not cancelled
     - unpaidoverdue: Balance != 0 and DueDate < today
+
+Some fields (Comments, OurReference, YourReference, YourOrderNumber)
+are only available on the single-invoice detail endpoint, not on the
+list endpoint.  When the user selects any of these columns, we
+automatically fetch individual invoice details for the filtered set.
+A semaphore limits concurrency to avoid hitting Fortnox rate limits.
 """
 
+import asyncio
+import logging
 from datetime import date
 from typing import Any
 
 from providers.base import AccountingProvider
+
+logger = logging.getLogger(__name__)
+
+# Maximum concurrent detail requests to Fortnox.
+_DETAIL_CONCURRENCY = 8
 
 
 # ----------------------------------------------------------------
@@ -81,6 +94,45 @@ def _matches_filter(
     return False
 
 
+async def _enrich_with_details(
+    provider: AccountingProvider,
+    endpoint: str,
+    invoices: list[dict],
+    id_field: str,
+    detail_fields: set[str],
+) -> None:
+    """Fetch individual invoice details and merge detail-only fields.
+
+    Only called when the user has selected columns that require the
+    single-invoice detail endpoint (e.g. Comments, OurReference).
+
+    Args:
+        provider: Accounting provider instance.
+        endpoint: API path (e.g. "/supplierinvoices").
+        invoices: List of invoice dicts to enrich (mutated in place).
+        id_field: Primary key field name (e.g. "GivenNumber").
+        detail_fields: Set of API field names that need detail fetch.
+    """
+    sem = asyncio.Semaphore(_DETAIL_CONCURRENCY)
+
+    async def _fetch_one(inv: dict) -> None:
+        async with sem:
+            try:
+                detail = await provider.get_invoice_detail(
+                    endpoint, inv[id_field],
+                )
+                for field in detail_fields:
+                    if field in detail:
+                        inv[field] = detail[field]
+            except Exception:
+                logger.debug(
+                    "Failed to fetch detail for %s %s",
+                    endpoint, inv.get(id_field),
+                )
+
+    await asyncio.gather(*(_fetch_one(inv) for inv in invoices))
+
+
 async def _fetch_invoices(
     provider: AccountingProvider,
     endpoint: str,
@@ -90,6 +142,9 @@ async def _fetch_invoices(
     to_date: str | None = None,
     statuses: list[str] | None = None,
     selected_columns: list[str] | None = None,
+    *,
+    detail_only_fields: set[str] | None = None,
+    id_field: str = "GivenNumber",
 ) -> dict[str, Any]:
     """Fetch and filter invoices from a Fortnox endpoint.
 
@@ -102,6 +157,8 @@ async def _fetch_invoices(
         to_date: End date (YYYY-MM-DD). Optional.
         statuses: List of status filters to include. If empty/None, all.
         selected_columns: Which column labels to include. If None, all.
+        detail_only_fields: API field names that require a detail fetch.
+        id_field: Primary key field for detail lookups.
 
     Returns:
         Dict with 'headers', 'rows', and 'count'.
@@ -134,6 +191,18 @@ async def _fetch_invoices(
         col_set = set(selected_columns)
         cols = [(key, label) for key, label in columns if label in col_set]
 
+    # Check if any selected column requires detail-only data.
+    if detail_only_fields and filtered:
+        needed = {key for key, _ in cols if key in detail_only_fields}
+        if needed:
+            logger.info(
+                "Fetching detail for %d invoices (fields: %s)",
+                len(filtered), ", ".join(sorted(needed)),
+            )
+            await _enrich_with_details(
+                provider, endpoint, filtered, id_field, needed,
+            )
+
     # Map to output format.
     headers = [label for _, label in cols]
     rows = [
@@ -152,6 +221,9 @@ SUPPLIER_STATUS_OPTIONS = [
     "booked", "unbooked", "cancelled", "fullypaid", "unpaid", "unpaidoverdue",
 ]
 
+# Fields only available on the single-invoice detail endpoint.
+_LRK_DETAIL_FIELDS = {"Comments", "OurReference", "YourReference"}
+
 # Columns to include in the LRK output (order matters for Excel).
 LRK_COLUMNS = [
     ("GivenNumber", "Nr"),
@@ -164,8 +236,14 @@ LRK_COLUMNS = [
     ("Balance", "Saldo"),
     ("Currency", "Valuta"),
     ("_status", "Status"),
+    ("Booked", "Bokförd"),
+    ("Cancel", "Makulerad"),
     ("CostCenter", "Kostnadsställe"),
     ("Project", "Projekt"),
+    ("AuthorizerName", "Attesterad av"),
+    ("Comments", "Kommentar"),
+    ("OurReference", "Vår referens"),
+    ("YourReference", "Er referens"),
 ]
 
 
@@ -180,6 +258,8 @@ async def fetch_supplier_invoices(
     return await _fetch_invoices(
         provider, "/supplierinvoices", LRK_COLUMNS, "Cancel",
         from_date, to_date, statuses, selected_columns,
+        detail_only_fields=_LRK_DETAIL_FIELDS,
+        id_field="GivenNumber",
     )
 
 
@@ -190,6 +270,11 @@ async def fetch_supplier_invoices(
 CUSTOMER_STATUS_OPTIONS = [
     "booked", "unbooked", "cancelled", "fullypaid", "unpaid", "unpaidoverdue",
 ]
+
+# Fields only available on the single-invoice detail endpoint.
+_KRK_DETAIL_FIELDS = {
+    "Comments", "OurReference", "YourReference", "YourOrderNumber",
+}
 
 # Columns to include in the KRK output.
 KRK_COLUMNS = [
@@ -203,8 +288,14 @@ KRK_COLUMNS = [
     ("Currency", "Valuta"),
     ("_status", "Status"),
     ("Sent", "Skickad"),
+    ("Booked", "Bokförd"),
+    ("Cancelled", "Makulerad"),
     ("CostCenter", "Kostnadsställe"),
     ("Project", "Projekt"),
+    ("Comments", "Kommentar"),
+    ("OurReference", "Vår referens"),
+    ("YourReference", "Er referens"),
+    ("YourOrderNumber", "Er ordernr"),
 ]
 
 
@@ -219,4 +310,6 @@ async def fetch_customer_invoices(
     return await _fetch_invoices(
         provider, "/invoices", KRK_COLUMNS, "Cancelled",
         from_date, to_date, statuses, selected_columns,
+        detail_only_fields=_KRK_DETAIL_FIELDS,
+        id_field="DocumentNumber",
     )

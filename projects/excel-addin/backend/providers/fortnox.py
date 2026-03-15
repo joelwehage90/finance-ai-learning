@@ -60,6 +60,18 @@ class FortnoxProvider(AccountingProvider):
         """Fetch all pages of invoices from a Fortnox endpoint."""
         return await self._client.get_all_pages(endpoint, params=params)
 
+    async def get_invoice_detail(
+        self,
+        endpoint: str,
+        invoice_id: str | int,
+    ) -> dict[str, Any]:
+        """Fetch a single invoice with full detail fields from Fortnox."""
+        data = await self._client.get(f"{endpoint}/{invoice_id}")
+        # Response is e.g. {"SupplierInvoice": {...}} or {"Invoice": {...}}.
+        # Return the inner object.
+        data_key = next((k for k in data if k != "MetaInformation"), None)
+        return data[data_key] if data_key else data
+
     async def get_sie_export(
         self,
         sie_type: int,

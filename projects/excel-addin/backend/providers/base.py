@@ -42,6 +42,26 @@ class AccountingProvider(ABC):
         ...
 
     @abstractmethod
+    async def get_invoice_detail(
+        self,
+        endpoint: str,
+        invoice_id: str | int,
+    ) -> dict[str, Any]:
+        """Fetch a single invoice with all detail fields.
+
+        The list endpoint omits fields like Comments, OurReference,
+        YourReference, etc.  This method fetches the full object.
+
+        Args:
+            endpoint: API-specific path (e.g. "/supplierinvoices").
+            invoice_id: Primary key (GivenNumber or DocumentNumber).
+
+        Returns:
+            Full invoice dict with all fields.
+        """
+        ...
+
+    @abstractmethod
     async def get_sie_export(
         self,
         sie_type: int,
